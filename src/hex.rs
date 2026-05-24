@@ -69,11 +69,11 @@ impl Hex {
 /// The six unit-step directions in axial coordinates.
 pub const DIRECTIONS: [Hex; 6] = [
     Hex::new(1, 0),
-    Hex::new(1, -1),
-    Hex::new(0, -1),
-    Hex::new(-1, 0),
-    Hex::new(-1, 1),
     Hex::new(0, 1),
+    Hex::new(-1, 1),
+    Hex::new(-1, 0),
+    Hex::new(0, -1),
+    Hex::new(1, -1),
 ];
 
 impl Add for Hex {
@@ -143,5 +143,15 @@ mod tests {
             x = x.rotate_cw();
         }
         assert_eq!(x, h);
+    }
+
+    #[test]
+    fn directions_are_ccw() {
+        // DIRECTIONS is in CCW order: rotate_cw steps to the next direction,
+        // rotate_ccw steps to the previous one.
+        for i in 0..6 {
+            assert_eq!(DIRECTIONS[i].rotate_cw(), DIRECTIONS[(i + 1) % 6]);
+            assert_eq!(DIRECTIONS[i].rotate_ccw(), DIRECTIONS[(i + 5) % 6]);
+        }
     }
 }

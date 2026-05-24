@@ -12,7 +12,7 @@ pub struct MarkedTile<L> {
 }
 
 impl<L> MarkedTile<L> {
-    pub fn new(edges: [L; 6]) -> Self {
+    pub const fn new(edges: [L; 6]) -> Self {
         Self { edges }
     }
 }
