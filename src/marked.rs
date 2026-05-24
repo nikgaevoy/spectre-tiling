@@ -17,6 +17,27 @@ impl<L> MarkedTile<L> {
     }
 }
 
+impl<L: Copy> MarkedTile<L> {
+    /// Rotate the tile CCW by `n` clicks (each click is 60°).
+    ///
+    /// After rotating CCW by `n`, the edge that was at position `i` faces
+    /// direction `(i + n) % 6`, so `new[i] = old[(i + 6 - n % 6) % 6]`.
+    pub fn rotate(&self, n: usize) -> Self {
+        let n = n % 6;
+        MarkedTile::new(std::array::from_fn(|i| self.edges[(i + 6 - n) % 6]))
+    }
+
+    /// Rotate CCW by one click (60°).
+    pub fn rotate_ccw(&self) -> Self {
+        self.rotate(1)
+    }
+
+    /// Rotate CW by one click (60°), equivalent to five CCW clicks.
+    pub fn rotate_cw(&self) -> Self {
+        self.rotate(5)
+    }
+}
+
 /// An assignment of [`MarkedTile`]s to hex positions.
 ///
 /// A tiling is **valid** when every pair of adjacent tiles has matching edge
@@ -120,5 +141,49 @@ mod tests {
         t.insert(Hex::new(0, 0), tile([0; 6]));
         t.insert(Hex::new(1, 0), tile([0; 6]));
         assert!(t.is_valid());
+    }
+
+    #[test]
+    fn rotate_zero_is_identity() {
+        let t = tile([1, 2, 3, 4, 5, 6]);
+        assert_eq!(t.rotate(0).edges, t.edges);
+        assert_eq!(t.rotate(6).edges, t.edges);
+    }
+
+    #[test]
+    fn rotate_ccw_shifts_edges() {
+        let t = tile([1, 2, 3, 4, 5, 6]);
+        let r = t.rotate_ccw();
+        // CCW rotation: old edge i moves to position (i+1)%6, so new[i] = old[(i+5)%6].
+        for i in 0..6 {
+            assert_eq!(r.edges[i], t.edges[(i + 5) % 6]);
+        }
+    }
+
+    #[test]
+    fn rotate_cw_shifts_edges() {
+        let t = tile([1, 2, 3, 4, 5, 6]);
+        let r = t.rotate_cw();
+        // CW rotation: new[i] = old[(i+1)%6].
+        for i in 0..6 {
+            assert_eq!(r.edges[i], t.edges[(i + 1) % 6]);
+        }
+    }
+
+    #[test]
+    fn rotate_ccw_six_times_is_identity() {
+        let t = tile([1, 2, 3, 4, 5, 6]);
+        let mut r = t.clone();
+        for _ in 0..6 {
+            r = r.rotate_ccw();
+        }
+        assert_eq!(r.edges, t.edges);
+    }
+
+    #[test]
+    fn rotate_cw_and_ccw_are_inverses() {
+        let t = tile([1, 2, 3, 4, 5, 6]);
+        assert_eq!(t.rotate_ccw().rotate_cw().edges, t.edges);
+        assert_eq!(t.rotate_cw().rotate_ccw().edges, t.edges);
     }
 }

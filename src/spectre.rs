@@ -38,13 +38,52 @@ impl Neg for Label {
     }
 }
 
-// TODO: fill in edge labels for all tiles below
-pub const GAMMA: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const DELTA: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const THETA: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const LAMBDA: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const XI: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const PI: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const SIGMA: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const PHI: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
-pub const PSI: MarkedTile<Label> = MarkedTile::new([Label::Eta; 6]);
+// Edge arrays are indexed [E, NE, NW, W, SW, SE] matching DIRECTIONS[0..6].
+use Label::*;
+pub const GAMMA:  MarkedTile<Label> = MarkedTile::new([NegDelta, Beta,     NegBeta,  NegAlpha, Alpha,   NegGamma  ]);
+pub const DELTA:  MarkedTile<Label> = MarkedTile::new([Alpha,    NegGamma, NegZeta,  Gamma,    Beta,    NegEpsilon]);
+pub const THETA:  MarkedTile<Label> = MarkedTile::new([Beta,     Eta,      NegBeta,  Gamma,    Beta,    Theta     ]);
+pub const LAMBDA: MarkedTile<Label> = MarkedTile::new([Alpha,    NegTheta, NegBeta,  Gamma,    Beta,    NegEpsilon]);
+pub const XI:     MarkedTile<Label> = MarkedTile::new([Beta,     Eta,      NegBeta,  NegAlpha, Epsilon, Theta     ]);
+pub const PI:     MarkedTile<Label> = MarkedTile::new([Alpha,    NegTheta, NegBeta,  NegAlpha, Epsilon, NegEpsilon]);
+pub const SIGMA:  MarkedTile<Label> = MarkedTile::new([Alpha,    NegGamma, Delta,    Zeta,     Beta,    NegEpsilon]);
+pub const PHI:    MarkedTile<Label> = MarkedTile::new([Epsilon,  Eta,      NegBeta,  Gamma,    Beta,    NegEpsilon]);
+pub const PSI:    MarkedTile<Label> = MarkedTile::new([Epsilon,  Eta,      NegBeta,  NegAlpha, Epsilon, NegEpsilon]);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotate_six_is_identity() {
+        for tile in [GAMMA, DELTA, THETA, LAMBDA, XI, PI, SIGMA, PHI, PSI] {
+            assert_eq!(tile.rotate(6).edges, tile.edges);
+        }
+    }
+
+    #[test]
+    fn rotate_ccw_then_cw_is_identity() {
+        for tile in [GAMMA, DELTA, THETA, LAMBDA, XI, PI, SIGMA, PHI, PSI] {
+            assert_eq!(tile.rotate_ccw().rotate_cw().edges, tile.edges);
+            assert_eq!(tile.rotate_cw().rotate_ccw().edges, tile.edges);
+        }
+    }
+
+    #[test]
+    fn rotate_ccw_edge_positions() {
+        // After one CCW click, old edge i is now at position (i+1)%6.
+        let r = GAMMA.rotate_ccw();
+        for i in 0..6 {
+            assert_eq!(r.edges[(i + 1) % 6], GAMMA.edges[i]);
+        }
+    }
+
+    #[test]
+    fn rotate_cw_edge_positions() {
+        // After one CW click, old edge i is now at position (i+5)%6.
+        let r = GAMMA.rotate_cw();
+        for i in 0..6 {
+            assert_eq!(r.edges[(i + 5) % 6], GAMMA.edges[i]);
+        }
+    }
+}
