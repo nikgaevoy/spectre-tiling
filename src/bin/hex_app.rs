@@ -4,6 +4,10 @@ use eframe::egui;
 use spectre_tiling::hex::{Hex, DIRECTIONS};
 use spectre_tiling::marked::{MarkedTile, MarkedTiling};
 use spectre_tiling::spectre::Label;
+use spectre_tiling::supertile::{
+    supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi,
+    supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
+};
 use spectre_tiling::tiling::{tile_id, BASE_TILES, TILE_NAMES};
 
 const TILE_COLORS: [egui::Color32; 9] = [
@@ -17,6 +21,34 @@ const TILE_COLORS: [egui::Color32; 9] = [
     egui::Color32::from_rgb(0xa8, 0xc8, 0x28), // Φ
     egui::Color32::from_rgb(0x78, 0x98, 0x48), // Ψ
 ];
+
+// Supertile constructors in the same order as TILE_NAMES / BASE_TILES.
+const BASE_SUPERTILE_FNS: [fn() -> MarkedTiling<Label>; 9] = [
+    supertile_gamma,
+    supertile_delta,
+    supertile_theta,
+    supertile_lambda,
+    supertile_xi,
+    supertile_pi,
+    supertile_sigma,
+    supertile_phi,
+    supertile_psi,
+];
+
+// Rotate an entire tiling by `n` CCW visual steps (60° each).
+// hex.rotate_cw() moves a hex CCW on screen (y-down coords); tile.rotate(n) does the same
+// for edge labels — both transformations are consistent so validity is preserved.
+fn rotate_tiling(tiling: &MarkedTiling<Label>, n: usize) -> MarkedTiling<Label> {
+    let mut result = MarkedTiling::new();
+    for (&hex, tile) in &tiling.tiles {
+        let mut rh = hex;
+        for _ in 0..n {
+            rh = rh.rotate_cw();
+        }
+        result.insert(rh, tile.rotate(n));
+    }
+    result
+}
 
 // Pointy-top hex: corner i is at angle (30 + 60*i) degrees.
 fn corner(sc: egui::Pos2, zoom: f32, i: usize) -> egui::Pos2 {
@@ -118,6 +150,12 @@ fn label_str(label: Label) -> &'static str {
     }
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum PlaceMode {
+    Single,
+    Supertile,
+}
+
 struct Brush {
     type_idx: usize,
     rotation: usize,
@@ -127,6 +165,8 @@ struct HexApp {
     tiling: MarkedTiling<Label>,
     invalid_edges: HashSet<(Hex, usize)>,
     brush: Brush,
+    mode: PlaceMode,
+    hover_hex: Option<Hex>,
     pan: egui::Vec2,
     zoom: f32,
 }
@@ -140,6 +180,8 @@ impl Default for HexApp {
                 type_idx: 0,
                 rotation: 0,
             },
+            mode: PlaceMode::Single,
+            hover_hex: None,
             pan: egui::Vec2::ZERO,
             zoom: 50.0,
         }
@@ -147,8 +189,62 @@ impl Default for HexApp {
 }
 
 impl HexApp {
+    // Returns the patch to place (at origin), respecting current mode and brush.
+    fn placement_patch(&self) -> MarkedTiling<Label> {
+        match self.mode {
+            PlaceMode::Single => {
+                let mut t = MarkedTiling::new();
+                t.insert(
+                    Hex::new(0, 0),
+                    BASE_TILES[self.brush.type_idx].rotate(self.brush.rotation),
+                );
+                t
+            }
+            PlaceMode::Supertile => {
+                rotate_tiling(&BASE_SUPERTILE_FNS[self.brush.type_idx](), self.brush.rotation)
+            }
+        }
+    }
+
     fn side_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("tools").min_width(130.0).show(ctx, |ui| {
+            // Mode toggle
+            ui.heading("Mode");
+            ui.separator();
+            ui.horizontal(|ui| {
+                let single_sel = self.mode == PlaceMode::Single;
+                let super_sel = self.mode == PlaceMode::Supertile;
+                if ui
+                    .add(
+                        egui::Button::new("Single")
+                            .fill(if single_sel {
+                                egui::Color32::from_rgb(80, 120, 200)
+                            } else {
+                                egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
+                            })
+                            .min_size(egui::vec2(52.0, 24.0)),
+                    )
+                    .clicked()
+                {
+                    self.mode = PlaceMode::Single;
+                }
+                if ui
+                    .add(
+                        egui::Button::new("Supertile")
+                            .fill(if super_sel {
+                                egui::Color32::from_rgb(80, 120, 200)
+                            } else {
+                                egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
+                            })
+                            .min_size(egui::vec2(52.0, 24.0)),
+                    )
+                    .clicked()
+                {
+                    self.mode = PlaceMode::Supertile;
+                }
+            });
+
+            ui.add_space(10.0);
             ui.heading("Tile Type");
             ui.separator();
             for i in 0..9 {
@@ -183,7 +279,7 @@ impl HexApp {
             });
             ui.label(format!("{}×60° CCW", self.brush.rotation));
 
-            // Tile preview
+            // Preview — single tile always; supertile shows "n tiles" note
             ui.add_space(6.0);
             let (preview_resp, preview_painter) =
                 ui.allocate_painter(egui::vec2(90.0, 90.0), egui::Sense::hover());
@@ -210,6 +306,10 @@ impl HexApp {
                     egui::FontId::proportional(8.0),
                     egui::Color32::WHITE,
                 );
+            }
+            if self.mode == PlaceMode::Supertile {
+                let n = BASE_SUPERTILE_FNS[self.brush.type_idx]().tiles.len();
+                ui.small(format!("({n} tiles)"));
             }
 
             ui.add_space(10.0);
@@ -286,7 +386,12 @@ impl HexApp {
         }
     }
 
-    fn draw_edge_labels(painter: &egui::Painter, tile: &MarkedTile<Label>, sc: egui::Pos2, zoom: f32) {
+    fn draw_edge_labels(
+        painter: &egui::Painter,
+        tile: &MarkedTile<Label>,
+        sc: egui::Pos2,
+        zoom: f32,
+    ) {
         let font_size = (zoom * 0.20).max(8.0);
         for i in 0..6 {
             let [a, b] = edge_endpoints(sc, zoom, i);
@@ -305,12 +410,40 @@ impl HexApp {
         }
     }
 
+    fn draw_ghost(
+        painter: &egui::Painter,
+        patch: &MarkedTiling<Label>,
+        offset: Hex,
+        zoom: f32,
+        pan: egui::Vec2,
+        canvas_center: egui::Pos2,
+    ) {
+        for (&h, tile) in &patch.tiles {
+            let sc = hex_to_screen(h + offset, zoom, pan, canvas_center);
+            let type_idx = tile_id(tile).map(|(ti, _)| ti).unwrap_or(0);
+            let c = TILE_COLORS[type_idx];
+            painter.add(egui::Shape::convex_polygon(
+                hex_corners(sc, zoom),
+                egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 120),
+                egui::Stroke::new(
+                    1.5,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 140),
+                ),
+            ));
+        }
+    }
+
     fn handle_input(
         &mut self,
         ctx: &egui::Context,
         response: &egui::Response,
         canvas_center: egui::Pos2,
     ) {
+        // Track hover hex for ghost preview
+        self.hover_hex = response
+            .hover_pos()
+            .map(|pos| screen_to_hex(pos, self.zoom, self.pan, canvas_center));
+
         // Pan via drag
         self.pan += response.drag_delta();
 
@@ -327,17 +460,19 @@ impl HexApp {
             }
         }
 
-        // Place tile on left click (egui only fires clicked() when movement was small)
+        // Place on left click
         if response.clicked_by(egui::PointerButton::Primary) {
             if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
-                let tile = BASE_TILES[self.brush.type_idx].rotate(self.brush.rotation);
-                self.tiling.insert(hex, tile);
+                let patch = self.placement_patch();
+                for (&h, tile) in &patch.tiles {
+                    self.tiling.insert(h + hex, tile.clone());
+                }
                 self.invalid_edges = recompute_invalid(&self.tiling);
             }
         }
 
-        // Erase on right click
+        // Erase single tile on right click
         if response.secondary_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
@@ -379,6 +514,12 @@ impl eframe::App for HexApp {
                         Self::draw_edge_labels(&painter, &tile, sc, self.zoom);
                     }
                 }
+            }
+
+            // Ghost preview of pending placement at hover position
+            if let Some(hover) = self.hover_hex {
+                let patch = self.placement_patch();
+                Self::draw_ghost(&painter, &patch, hover, self.zoom, self.pan, canvas_center);
             }
         });
     }
