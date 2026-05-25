@@ -1,6 +1,9 @@
 use spectre_tiling::marked::MarkedTiling;
 use spectre_tiling::spectre::Label;
-use spectre_tiling::supertile::{supertile_gamma, supertile_delta, supertile_theta};
+use spectre_tiling::supertile::{
+    supertile_gamma, supertile_delta, supertile_theta, supertile_lambda,
+    supertile_xi, supertile_pi, supertile_sigma, supertile_phi, supertile_psi,
+};
 use spectre_tiling::tiling::tile_id;
 use std::fmt::Write as FmtWrite;
 use std::f64::consts::PI;
@@ -113,6 +116,12 @@ fn main() {
         ("Γ", supertile_gamma(), "supertile_gamma.svg"),
         ("Δ", supertile_delta(), "supertile_delta.svg"),
         ("Θ", supertile_theta(), "supertile_theta.svg"),
+        ("Λ", supertile_lambda(), "supertile_lambda.svg"),
+        ("Ξ", supertile_xi(),    "supertile_xi.svg"),
+        ("Π", supertile_pi(),    "supertile_pi.svg"),
+        ("Σ", supertile_sigma(), "supertile_sigma.svg"),
+        ("Φ", supertile_phi(),   "supertile_phi.svg"),
+        ("Ψ", supertile_psi(),   "supertile_psi.svg"),
     ];
 
     for (name, tiling, filename) in &supertiles {
