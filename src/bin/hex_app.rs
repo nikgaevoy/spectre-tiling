@@ -345,20 +345,33 @@ impl HexApp {
     fn draw_hex(&self, painter: &egui::Painter, hex: Hex, sc: egui::Pos2) {
         let corners = hex_corners(sc, self.zoom);
         if let Some(tile) = self.tiling.tiles.get(&hex) {
-            let type_idx = tile_id(tile).map(|(ti, _)| ti).unwrap_or(0);
+            let (type_idx, rotation) = tile_id(tile).unwrap_or((0, 0));
             painter.add(egui::Shape::convex_polygon(
                 corners,
                 TILE_COLORS[type_idx],
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
             ));
             if self.zoom > 25.0 {
-                painter.text(
-                    sc,
-                    egui::Align2::CENTER_CENTER,
-                    TILE_NAMES[type_idx],
+                let galley = painter.layout_no_wrap(
+                    TILE_NAMES[type_idx].to_string(),
                     egui::FontId::proportional(self.zoom * 0.32),
                     egui::Color32::WHITE,
                 );
+                let sz = galley.size();
+                // CCW visual rotation: negative angle in egui's CW-positive convention.
+                // Each brush.rotation step = 60° CCW.
+                let angle = -(rotation as f32) * std::f32::consts::PI / 3.0;
+                let (cos_a, sin_a) = (angle.cos(), angle.sin());
+                // Place pos (top-left pivot) so the text center lands at sc after rotation.
+                // Rotation matrix (CW-positive, y-down): x'=x*cos-y*sin, y'=x*sin+y*cos
+                let pos = egui::pos2(
+                    sc.x - (sz.x / 2.0 * cos_a - sz.y / 2.0 * sin_a),
+                    sc.y - (sz.x / 2.0 * sin_a + sz.y / 2.0 * cos_a),
+                );
+                let mut text_shape =
+                    egui::epaint::TextShape::new(pos, galley, egui::Color32::WHITE);
+                text_shape.angle = angle;
+                painter.add(egui::Shape::Text(text_shape));
             }
         } else {
             painter.add(egui::Shape::closed_line(
