@@ -7,6 +7,7 @@ use spectre_tiling::spectre::Label;
 use spectre_tiling::supertile::{
     supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi,
     supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
+    AnchorPoint, SUPERTILE_ANCHORS,
 };
 use spectre_tiling::tiling::{tile_id, BASE_TILES, TILE_NAMES};
 
@@ -154,6 +155,7 @@ fn label_str(label: Label) -> &'static str {
 enum PlaceMode {
     Single,
     Supertile,
+    AnchorEdit,
 }
 
 struct Brush {
@@ -169,6 +171,14 @@ struct HexApp {
     hover_hex: Option<Hex>,
     pan: egui::Vec2,
     zoom: f32,
+    // (type_idx, rotation, origin) for each placed supertile, used to render anchors.
+    placed_supertiles: Vec<(usize, usize, Hex)>,
+    editable_anchors: [[AnchorPoint; 6]; 9],
+    active_anchor_slot: usize,
+    hover_corner: Option<(Hex, u8)>,
+    anchor_copy_feedback: f32,
+    save_feedback_timer: f32,
+    save_error: String,
 }
 
 impl Default for HexApp {
@@ -184,8 +194,39 @@ impl Default for HexApp {
             hover_hex: None,
             pan: egui::Vec2::ZERO,
             zoom: 50.0,
+            placed_supertiles: Vec::new(),
+            editable_anchors: SUPERTILE_ANCHORS,
+            active_anchor_slot: 0,
+            hover_corner: None,
+            anchor_copy_feedback: 0.0,
+            save_feedback_timer: 0.0,
+            save_error: String::new(),
         }
     }
+}
+
+fn find_nearest_corner(
+    supertile: &MarkedTiling<Label>,
+    cursor: egui::Pos2,
+    zoom: f32,
+    pan: egui::Vec2,
+    canvas_center: egui::Pos2,
+) -> Option<(Hex, u8)> {
+    let threshold = (zoom * 0.35).max(10.0);
+    let mut best: Option<(f32, Hex, u8)> = None;
+    for (&hex, _) in &supertile.tiles {
+        let sc = hex_to_screen(hex, zoom, pan, canvas_center);
+        for c in 0u8..6 {
+            let pos = corner(sc, zoom, c as usize);
+            let dist = (pos - cursor).length();
+            if dist < threshold {
+                if best.map_or(true, |(d, _, _)| dist < d) {
+                    best = Some((dist, hex, c));
+                }
+            }
+        }
+    }
+    best.map(|(_, h, c)| (h, c))
 }
 
 impl HexApp {
@@ -203,46 +244,90 @@ impl HexApp {
             PlaceMode::Supertile => {
                 rotate_tiling(&BASE_SUPERTILE_FNS[self.brush.type_idx](), self.brush.rotation)
             }
+            PlaceMode::AnchorEdit => MarkedTiling::new(),
         }
     }
 
+    fn generate_anchor_code(&self) -> String {
+        let anchors = &self.editable_anchors[self.brush.type_idx];
+        let aps: Vec<String> = anchors
+            .iter()
+            .map(|ap| format!("ap({},{},{})", ap.hex.q, ap.hex.r, ap.corner))
+            .collect();
+        format!("[{}]", aps.join(", "))
+    }
+
+    fn generate_all_anchors_code(&self) -> String {
+        let names = [
+            "Γ (supertile_gamma)", "Δ (supertile_delta)", "Θ (supertile_theta)",
+            "Λ (supertile_lambda)", "Ξ (supertile_xi)", "Π (supertile_pi)",
+            "Σ (supertile_sigma)", "Φ (supertile_phi)", "Ψ (supertile_psi)",
+        ];
+        let mut lines = Vec::new();
+        for (i, anchors) in self.editable_anchors.iter().enumerate() {
+            let aps: Vec<String> = anchors
+                .iter()
+                .map(|ap| format!("ap({},{},{})", ap.hex.q, ap.hex.r, ap.corner))
+                .collect();
+            lines.push(format!("    // {}", names[i]));
+            lines.push(format!("    [{}],", aps.join(", ")));
+        }
+        lines.join("\n")
+    }
+
+    fn save_anchors_to_source(&self) -> Result<(), String> {
+        let path = "src/supertile.rs";
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("Read error: {e}"))?;
+
+        let marker = "pub const SUPERTILE_ANCHORS: [[AnchorPoint; 6]; 9] = [";
+        let start = content
+            .find(marker)
+            .ok_or_else(|| "SUPERTILE_ANCHORS not found in supertile.rs".to_string())?;
+        let after_bracket = start + marker.len();
+
+        let end_rel = content[after_bracket..]
+            .find("\n];")
+            .ok_or_else(|| "Closing ]; not found in SUPERTILE_ANCHORS".to_string())?;
+
+        let prefix = &content[..after_bracket];
+        let suffix = &content[after_bracket + end_rel..]; // starts with "\n];"
+        let inner = self.generate_all_anchors_code();
+        let new_content = format!("{}\n{}{}", prefix, inner, suffix);
+
+        std::fs::write(path, new_content).map_err(|e| format!("Write error: {e}"))
+    }
+
     fn side_panel(&mut self, ctx: &egui::Context) {
+        let dt = ctx.input(|i| i.stable_dt);
+        self.anchor_copy_feedback = (self.anchor_copy_feedback - dt).max(0.0);
+        self.save_feedback_timer = (self.save_feedback_timer - dt).max(0.0);
         egui::SidePanel::left("tools").min_width(130.0).show(ctx, |ui| {
             // Mode toggle
             ui.heading("Mode");
             ui.separator();
-            ui.horizontal(|ui| {
-                let single_sel = self.mode == PlaceMode::Single;
-                let super_sel = self.mode == PlaceMode::Supertile;
+            for &(label, mode) in &[
+                ("Single", PlaceMode::Single),
+                ("Supertile", PlaceMode::Supertile),
+                ("Anchor Edit", PlaceMode::AnchorEdit),
+            ] {
+                let selected = self.mode == mode;
+                let fill = if selected {
+                    egui::Color32::from_rgb(80, 120, 200)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
+                };
                 if ui
                     .add(
-                        egui::Button::new("Single")
-                            .fill(if single_sel {
-                                egui::Color32::from_rgb(80, 120, 200)
-                            } else {
-                                egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
-                            })
-                            .min_size(egui::vec2(52.0, 24.0)),
+                        egui::Button::new(label)
+                            .fill(fill)
+                            .min_size(egui::vec2(110.0, 24.0)),
                     )
                     .clicked()
                 {
-                    self.mode = PlaceMode::Single;
+                    self.mode = mode;
                 }
-                if ui
-                    .add(
-                        egui::Button::new("Supertile")
-                            .fill(if super_sel {
-                                egui::Color32::from_rgb(80, 120, 200)
-                            } else {
-                                egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
-                            })
-                            .min_size(egui::vec2(52.0, 24.0)),
-                    )
-                    .clicked()
-                {
-                    self.mode = PlaceMode::Supertile;
-                }
-            });
+            }
 
             ui.add_space(10.0);
             ui.heading("Tile Type");
@@ -266,50 +351,137 @@ impl HexApp {
                 }
             }
 
-            ui.add_space(10.0);
-            ui.heading("Rotation");
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("↺ CCW").clicked() {
-                    self.brush.rotation = (self.brush.rotation + 1) % 6;
-                }
-                if ui.button("↻ CW").clicked() {
-                    self.brush.rotation = (self.brush.rotation + 5) % 6;
-                }
-            });
-            ui.label(format!("{}×60° CCW", self.brush.rotation));
+            if self.mode != PlaceMode::AnchorEdit {
+                ui.add_space(10.0);
+                ui.heading("Rotation");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("↺ CCW").clicked() {
+                        self.brush.rotation = (self.brush.rotation + 1) % 6;
+                    }
+                    if ui.button("↻ CW").clicked() {
+                        self.brush.rotation = (self.brush.rotation + 5) % 6;
+                    }
+                });
+                ui.label(format!("{}×60° CCW", self.brush.rotation));
 
-            // Preview — single tile always; supertile shows "n tiles" note
-            ui.add_space(6.0);
-            let (preview_resp, preview_painter) =
-                ui.allocate_painter(egui::vec2(90.0, 90.0), egui::Sense::hover());
-            let pc = preview_resp.rect.center();
-            let pz = 32.0_f32;
-            let tile = BASE_TILES[self.brush.type_idx].rotate(self.brush.rotation);
-            let color = TILE_COLORS[self.brush.type_idx];
-            preview_painter.add(egui::Shape::convex_polygon(
-                hex_corners(pc, pz),
-                color,
-                egui::Stroke::new(1.5, egui::Color32::BLACK),
-            ));
-            for i in 0..6 {
-                let [a, b] = edge_endpoints(pc, pz, i);
-                let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-                let inset = egui::pos2(
-                    mid.x + (pc.x - mid.x) * 0.3,
-                    mid.y + (pc.y - mid.y) * 0.3,
-                );
-                preview_painter.text(
-                    inset,
-                    egui::Align2::CENTER_CENTER,
-                    label_str(tile.edges[i]),
-                    egui::FontId::proportional(8.0),
-                    egui::Color32::WHITE,
-                );
-            }
-            if self.mode == PlaceMode::Supertile {
-                let n = BASE_SUPERTILE_FNS[self.brush.type_idx]().tiles.len();
-                ui.small(format!("({n} tiles)"));
+                // Preview — single tile always; supertile shows "n tiles" note
+                ui.add_space(6.0);
+                let (preview_resp, preview_painter) =
+                    ui.allocate_painter(egui::vec2(90.0, 90.0), egui::Sense::hover());
+                let pc = preview_resp.rect.center();
+                let pz = 32.0_f32;
+                let tile = BASE_TILES[self.brush.type_idx].rotate(self.brush.rotation);
+                let color = TILE_COLORS[self.brush.type_idx];
+                preview_painter.add(egui::Shape::convex_polygon(
+                    hex_corners(pc, pz),
+                    color,
+                    egui::Stroke::new(1.5, egui::Color32::BLACK),
+                ));
+                for i in 0..6 {
+                    let [a, b] = edge_endpoints(pc, pz, i);
+                    let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+                    let inset = egui::pos2(
+                        mid.x + (pc.x - mid.x) * 0.3,
+                        mid.y + (pc.y - mid.y) * 0.3,
+                    );
+                    preview_painter.text(
+                        inset,
+                        egui::Align2::CENTER_CENTER,
+                        label_str(tile.edges[i]),
+                        egui::FontId::proportional(8.0),
+                        egui::Color32::WHITE,
+                    );
+                }
+                if self.mode == PlaceMode::Supertile {
+                    let n = BASE_SUPERTILE_FNS[self.brush.type_idx]().tiles.len();
+                    ui.small(format!("({n} tiles)"));
+                }
+            } else {
+                // Anchor slot editor
+                ui.add_space(10.0);
+                ui.heading("Anchor Slots");
+                ui.separator();
+                let slot_colors = [
+                    egui::Color32::from_rgb(255, 80, 80),
+                    egui::Color32::from_rgb(80, 200, 80),
+                    egui::Color32::from_rgb(80, 120, 255),
+                    egui::Color32::from_rgb(220, 180, 0),
+                    egui::Color32::from_rgb(200, 80, 200),
+                    egui::Color32::from_rgb(0, 190, 190),
+                ];
+                for slot in 0..6 {
+                    let ap = self.editable_anchors[self.brush.type_idx][slot];
+                    let is_active = self.active_anchor_slot == slot;
+                    let color = slot_colors[slot];
+                    let text = format!("{}: ({},{}) c{}", slot, ap.hex.q, ap.hex.r, ap.corner);
+                    let fill = if is_active {
+                        color
+                    } else {
+                        egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60)
+                    };
+                    let text_color = if is_active {
+                        egui::Color32::BLACK
+                    } else {
+                        color
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(text).color(text_color).strong(),
+                            )
+                            .fill(fill)
+                            .min_size(egui::vec2(115.0, 22.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_anchor_slot = slot;
+                    }
+                }
+                ui.add_space(6.0);
+                ui.small("Click canvas corner to set slot.");
+                ui.add_space(4.0);
+                if ui.button("Copy Current").clicked() {
+                    let code = self.generate_anchor_code();
+                    ctx.copy_text(code);
+                    self.anchor_copy_feedback = 2.0;
+                }
+                if ui.button("Copy All").clicked() {
+                    let code = self.generate_all_anchors_code();
+                    ctx.copy_text(code);
+                    self.anchor_copy_feedback = 2.0;
+                }
+                if self.anchor_copy_feedback > 0.0 {
+                    ui.colored_label(egui::Color32::from_rgb(50, 200, 80), "Copied!");
+                    ctx.request_repaint();
+                }
+                ui.add_space(4.0);
+                if ui.button("Save to supertile.rs").clicked() {
+                    match self.save_anchors_to_source() {
+                        Ok(()) => {
+                            self.save_error = String::new();
+                            self.save_feedback_timer = 3.0;
+                        }
+                        Err(e) => {
+                            self.save_error = e;
+                            self.save_feedback_timer = 5.0;
+                        }
+                    }
+                }
+                if self.save_feedback_timer > 0.0 {
+                    if self.save_error.is_empty() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(50, 200, 80),
+                            "Saved to supertile.rs ✓",
+                        );
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(220, 60, 40),
+                            &self.save_error.clone(),
+                        );
+                    }
+                    ctx.request_repaint();
+                }
             }
 
             ui.add_space(10.0);
@@ -317,6 +489,7 @@ impl HexApp {
             if ui.button("Clear All").clicked() {
                 self.tiling = MarkedTiling::new();
                 self.invalid_edges.clear();
+                self.placed_supertiles.clear();
             }
             ui.add_space(6.0);
             let n = self.tiling.tiles.len();
@@ -344,7 +517,12 @@ impl HexApp {
 
     fn draw_hex(&self, painter: &egui::Painter, hex: Hex, sc: egui::Pos2) {
         let corners = hex_corners(sc, self.zoom);
-        if let Some(tile) = self.tiling.tiles.get(&hex) {
+        let tile_in_tiling = if self.mode != PlaceMode::AnchorEdit {
+            self.tiling.tiles.get(&hex)
+        } else {
+            None
+        };
+        if let Some(tile) = tile_in_tiling {
             let (type_idx, rotation) = tile_id(tile).unwrap_or((0, 0));
             painter.add(egui::Shape::convex_polygon(
                 corners,
@@ -423,6 +601,28 @@ impl HexApp {
         }
     }
 
+    fn draw_anchor_points(
+        painter: &egui::Painter,
+        anchors: &[AnchorPoint; 6],
+        offset: Hex,
+        zoom: f32,
+        pan: egui::Vec2,
+        canvas_center: egui::Pos2,
+        alpha: u8,
+    ) {
+        let radius = (zoom * 0.12).max(3.0);
+        for ap in anchors {
+            let sc = hex_to_screen(ap.hex + offset, zoom, pan, canvas_center);
+            let pos = corner(sc, zoom, ap.corner as usize);
+            painter.circle(
+                pos,
+                radius,
+                egui::Color32::from_rgba_unmultiplied(255, 220, 40, alpha),
+                egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha)),
+            );
+        }
+    }
+
     fn draw_ghost(
         painter: &egui::Painter,
         patch: &MarkedTiling<Label>,
@@ -433,7 +633,7 @@ impl HexApp {
     ) {
         for (&h, tile) in &patch.tiles {
             let sc = hex_to_screen(h + offset, zoom, pan, canvas_center);
-            let type_idx = tile_id(tile).map(|(ti, _)| ti).unwrap_or(0);
+            let (type_idx, rotation) = tile_id(tile).unwrap_or((0, 0));
             let c = TILE_COLORS[type_idx];
             painter.add(egui::Shape::convex_polygon(
                 hex_corners(sc, zoom),
@@ -443,6 +643,41 @@ impl HexApp {
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 140),
                 ),
             ));
+            if zoom > 25.0 {
+                let galley = painter.layout_no_wrap(
+                    TILE_NAMES[type_idx].to_string(),
+                    egui::FontId::proportional(zoom * 0.32),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
+                );
+                let sz = galley.size();
+                let angle = -(rotation as f32) * std::f32::consts::PI / 3.0;
+                let (cos_a, sin_a) = (angle.cos(), angle.sin());
+                let pos = egui::pos2(
+                    sc.x - (sz.x / 2.0 * cos_a - sz.y / 2.0 * sin_a),
+                    sc.y - (sz.x / 2.0 * sin_a + sz.y / 2.0 * cos_a),
+                );
+                let mut text_shape =
+                    egui::epaint::TextShape::new(pos, galley, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200));
+                text_shape.angle = angle;
+                painter.add(egui::Shape::Text(text_shape));
+
+                let font_size = (zoom * 0.20).max(8.0);
+                for i in 0..6 {
+                    let [a, b] = edge_endpoints(sc, zoom, i);
+                    let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+                    let inset = egui::pos2(
+                        mid.x + (sc.x - mid.x) * 0.25,
+                        mid.y + (sc.y - mid.y) * 0.25,
+                    );
+                    painter.text(
+                        inset,
+                        egui::Align2::CENTER_CENTER,
+                        label_str(tile.edges[i]),
+                        egui::FontId::proportional(font_size),
+                        egui::Color32::from_rgba_unmultiplied(20, 20, 20, 200),
+                    );
+                }
+            }
         }
     }
 
@@ -456,6 +691,16 @@ impl HexApp {
         self.hover_hex = response
             .hover_pos()
             .map(|pos| screen_to_hex(pos, self.zoom, self.pan, canvas_center));
+
+        // Track nearest hex corner in anchor edit mode
+        if self.mode == PlaceMode::AnchorEdit {
+            let supertile = BASE_SUPERTILE_FNS[self.brush.type_idx]();
+            self.hover_corner = response.hover_pos().and_then(|cursor| {
+                find_nearest_corner(&supertile, cursor, self.zoom, self.pan, canvas_center)
+            });
+        } else {
+            self.hover_corner = None;
+        }
 
         // Pan via drag
         self.pan += response.drag_delta();
@@ -475,18 +720,27 @@ impl HexApp {
 
         // Place on left click
         if response.clicked_by(egui::PointerButton::Primary) {
-            if let Some(pos) = response.interact_pointer_pos() {
+            if self.mode == PlaceMode::AnchorEdit {
+                if let Some((hex, c)) = self.hover_corner {
+                    self.editable_anchors[self.brush.type_idx][self.active_anchor_slot] =
+                        AnchorPoint::new(hex, c);
+                    self.active_anchor_slot = (self.active_anchor_slot + 1) % 6;
+                }
+            } else if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
                 let patch = self.placement_patch();
                 for (&h, tile) in &patch.tiles {
                     self.tiling.insert(h + hex, tile.clone());
                 }
                 self.invalid_edges = recompute_invalid(&self.tiling);
+                if self.mode == PlaceMode::Supertile {
+                    self.placed_supertiles.push((self.brush.type_idx, self.brush.rotation, hex));
+                }
             }
         }
 
-        // Erase single tile on right click
-        if response.secondary_clicked() {
+        // Erase single tile on right click (not in anchor edit mode)
+        if response.secondary_clicked() && self.mode != PlaceMode::AnchorEdit {
             if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
                 self.tiling.tiles.remove(&hex);
@@ -515,12 +769,14 @@ impl eframe::App for HexApp {
                 self.draw_hex(&painter, hex, sc);
             }
 
-            for &hex in &hexes {
-                let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
-                self.draw_invalid_edges(&painter, hex, sc);
+            if self.mode != PlaceMode::AnchorEdit {
+                for &hex in &hexes {
+                    let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+                    self.draw_invalid_edges(&painter, hex, sc);
+                }
             }
 
-            if self.zoom > 35.0 {
+            if self.zoom > 35.0 && self.mode != PlaceMode::AnchorEdit {
                 for &hex in &hexes {
                     if let Some(tile) = self.tiling.tiles.get(&hex).cloned() {
                         let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
@@ -529,10 +785,101 @@ impl eframe::App for HexApp {
                 }
             }
 
+            // Anchor points for placed supertiles
+            if self.mode == PlaceMode::Supertile {
+                for &(type_idx, rotation, origin) in &self.placed_supertiles {
+                    let anchors = SUPERTILE_ANCHORS[type_idx].map(|ap| ap.rotate(rotation));
+                    Self::draw_anchor_points(&painter, &anchors, origin, self.zoom, self.pan, canvas_center, 255);
+                }
+            }
+
             // Ghost preview of pending placement at hover position
             if let Some(hover) = self.hover_hex {
-                let patch = self.placement_patch();
-                Self::draw_ghost(&painter, &patch, hover, self.zoom, self.pan, canvas_center);
+                if matches!(self.mode, PlaceMode::Single | PlaceMode::Supertile) {
+                    let patch = self.placement_patch();
+                    Self::draw_ghost(&painter, &patch, hover, self.zoom, self.pan, canvas_center);
+                    if self.mode == PlaceMode::Supertile {
+                        let anchors = SUPERTILE_ANCHORS[self.brush.type_idx].map(|ap| ap.rotate(self.brush.rotation));
+                        Self::draw_anchor_points(&painter, &anchors, hover, self.zoom, self.pan, canvas_center, 180);
+                    }
+                }
+            }
+
+            // Anchor edit overlay
+            if self.mode == PlaceMode::AnchorEdit {
+                let supertile = BASE_SUPERTILE_FNS[self.brush.type_idx]();
+
+                // Draw supertile tiles
+                for (&hex, tile) in &supertile.tiles {
+                    let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+                    let (type_idx, _) = tile_id(tile).unwrap_or((0, 0));
+                    painter.add(egui::Shape::convex_polygon(
+                        hex_corners(sc, self.zoom),
+                        TILE_COLORS[type_idx],
+                        egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
+                    ));
+                }
+
+                // Draw all hex corners as small dots
+                let dot_r = (self.zoom * 0.08).max(2.5);
+                for (&hex, _) in &supertile.tiles {
+                    let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+                    for c in 0u8..6 {
+                        let pos = corner(sc, self.zoom, c as usize);
+                        painter.circle(
+                            pos,
+                            dot_r,
+                            egui::Color32::from_rgba_unmultiplied(220, 220, 220, 180),
+                            egui::Stroke::NONE,
+                        );
+                    }
+                }
+
+                // Draw assigned anchor slots
+                let slot_colors = [
+                    egui::Color32::from_rgb(255, 80, 80),
+                    egui::Color32::from_rgb(80, 200, 80),
+                    egui::Color32::from_rgb(80, 120, 255),
+                    egui::Color32::from_rgb(220, 180, 0),
+                    egui::Color32::from_rgb(200, 80, 200),
+                    egui::Color32::from_rgb(0, 190, 190),
+                ];
+                for slot in 0..6 {
+                    let ap = self.editable_anchors[self.brush.type_idx][slot];
+                    let sc = hex_to_screen(ap.hex, self.zoom, self.pan, canvas_center);
+                    let pos = corner(sc, self.zoom, ap.corner as usize);
+                    let is_active = slot == self.active_anchor_slot;
+                    let r = if is_active {
+                        (self.zoom * 0.18).max(6.0)
+                    } else {
+                        (self.zoom * 0.13).max(4.0)
+                    };
+                    painter.circle(
+                        pos,
+                        r,
+                        slot_colors[slot],
+                        egui::Stroke::new(2.0, egui::Color32::BLACK),
+                    );
+                    painter.text(
+                        pos,
+                        egui::Align2::CENTER_CENTER,
+                        slot.to_string(),
+                        egui::FontId::proportional((self.zoom * 0.14).max(7.0)),
+                        egui::Color32::BLACK,
+                    );
+                }
+
+                // Hover corner highlight
+                if let Some((hh, hc)) = self.hover_corner {
+                    let sc = hex_to_screen(hh, self.zoom, self.pan, canvas_center);
+                    let pos = corner(sc, self.zoom, hc as usize);
+                    painter.circle(
+                        pos,
+                        (self.zoom * 0.22).max(7.0),
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
+                        egui::Stroke::new(2.5, egui::Color32::from_rgb(50, 200, 255)),
+                    );
+                }
             }
         });
     }
@@ -547,6 +894,28 @@ fn main() -> eframe::Result<()> {
                 .with_title("Spectre Hex Tile Editor"),
             ..Default::default()
         },
-        Box::new(|_cc| Ok(Box::new(HexApp::default()))),
+        Box::new(|cc| {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "NotoSans".into(),
+                egui::FontData::from_static(include_bytes!(
+                    "../../assets/NotoSans.ttf"
+                )).into(),
+            );
+            fonts.font_data.insert(
+                "NotoSansSymbols".into(),
+                egui::FontData::from_static(include_bytes!(
+                    "../../assets/NotoSansSymbols.ttf"
+                )).into(),
+            );
+            let proportional = fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default();
+            proportional.insert(0, "NotoSans".into());
+            proportional.push("NotoSansSymbols".into());
+            cc.egui_ctx.set_fonts(fonts);
+            Ok(Box::new(HexApp::default()))
+        }),
     )
 }

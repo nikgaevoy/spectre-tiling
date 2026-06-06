@@ -2,6 +2,67 @@ use crate::hex::Hex;
 use crate::marked::MarkedTiling;
 use crate::spectre::*;
 
+/// A specific vertex on a supertile border: the `corner`-th vertex (0–5) of `hex`.
+/// Both fields are in the supertile's local coordinate frame (origin = Hex(0,0)).
+/// Corner numbering matches `hex_app::corner()`: angle = 30° + 60°·i, y-down screen space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnchorPoint {
+    pub hex: Hex,
+    pub corner: u8,
+}
+
+impl AnchorPoint {
+    pub const fn new(hex: Hex, corner: u8) -> Self {
+        Self { hex, corner }
+    }
+
+    /// Rotate by `n` 60° steps, consistent with `rotate_tiling`.
+    /// Each step: hex → hex.rotate_cw(), corner → (corner + 5) % 6.
+    pub fn rotate(self, n: usize) -> Self {
+        let mut h = self.hex;
+        for _ in 0..n {
+            h = h.rotate_cw();
+        }
+        Self {
+            hex: h,
+            corner: ((self.corner as usize + 6 - n % 6) % 6) as u8,
+        }
+    }
+
+    /// Convert from supertile-local to global hex coordinates.
+    pub fn translate(self, origin: Hex) -> Self {
+        Self { hex: self.hex + origin, ..self }
+    }
+}
+
+const fn ap(q: i32, r: i32, corner: u8) -> AnchorPoint {
+    AnchorPoint::new(Hex::new(q, r), corner)
+}
+
+/// Base anchor points (rotation 0) for each supertile type.
+/// Index order: Γ=0 Δ=1 Θ=2 Λ=3 Ξ=4 Π=5 Σ=6 Φ=7 Ψ=8  (matches BASE_TILES / TILE_NAMES).
+/// Fill in hex coordinates and corner indices (0–5) manually.
+pub const SUPERTILE_ANCHORS: [[AnchorPoint; 6]; 9] = [
+    // Γ (supertile_gamma)
+    [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,5), ap(2,-1,0), ap(0,-1,1)],
+    // Δ (supertile_delta)
+    [ap(0,-1,2), ap(0,0,3), ap(1,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,1)],
+    // Θ (supertile_theta)
+    [ap(0,-1,3), ap(0,0,3), ap(1,1,4), ap(1,1,0), ap(2,-2,0), ap(2,-2,2)],
+    // Λ (supertile_lambda)
+    [ap(0,-1,3), ap(0,0,3), ap(1,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,1)],
+    // Ξ (supertile_xi)
+    [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,0), ap(2,-2,0), ap(2,-2,2)],
+    // Π (supertile_pi)
+    [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,1)],
+    // Σ (supertile_sigma)
+    [ap(0,-1,2), ap(0,1,3), ap(1,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,1)],
+    // Φ (supertile_phi)
+    [ap(0,-1,3), ap(0,0,3), ap(1,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,2)],
+    // Ψ (supertile_psi)
+    [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,2)],
+];
+
 pub fn supertile_gamma() -> MarkedTiling<Label> {
     let mut t = MarkedTiling::new();
 
