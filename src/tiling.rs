@@ -576,6 +576,66 @@ mod tests {
     }
 
     #[test]
+    fn supersubstitute_each_supertile_is_valid() {
+        // Seeding `supersubstitute` with any of the 9 base supertiles should
+        // produce an edge-label-consistent patch.
+        for (i, supertile_fn) in BASE_SUPERTILE_FNS.iter().enumerate() {
+            let input = supertile_fn();
+            let result = supersubstitute(&input);
+            assert!(
+                !result.tiles.is_empty(),
+                "supersubstitute({}) produced an empty tiling",
+                TILE_NAMES[i],
+            );
+            assert!(
+                result.is_valid(),
+                "supersubstitute({}) produced an invalid tiling",
+                TILE_NAMES[i],
+            );
+        }
+    }
+
+    #[test]
+    fn supersubstitute_each_rotated_supertile_is_valid() {
+        // Validity should be invariant under rotation of the input — every
+        // 60° rotation of every base supertile must substitute to a valid
+        // patch.
+        for (i, supertile_fn) in BASE_SUPERTILE_FNS.iter().enumerate() {
+            let base = supertile_fn();
+            for rot in 0..6 {
+                let input = base.rotate(rot);
+                let result = supersubstitute(&input);
+                assert!(
+                    result.is_valid(),
+                    "supersubstitute({}.rotate({})) produced an invalid tiling",
+                    TILE_NAMES[i], rot,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn supersubstitute_twice_each_rotated_supertile_is_valid() {
+        // Iterating the substitution should preserve validity: applying
+        // `supersubstitute` twice to any rotated base supertile must still
+        // yield a valid tiling.
+        for (i, supertile_fn) in BASE_SUPERTILE_FNS.iter().enumerate() {
+            let base = supertile_fn();
+            for rot in 0..6 {
+                let input = base.rotate(rot);
+                let once = supersubstitute(&input);
+                let twice = supersubstitute(&once);
+                assert!(
+                    twice.is_valid(),
+                    "supersubstitute(supersubstitute({}.rotate({}))) \
+                     produced an invalid tiling",
+                    TILE_NAMES[i], rot,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn supersubstitute_gamma_regions_disjoint() {
         use crate::supertile::supertile_gamma;
 
