@@ -63,6 +63,18 @@ pub const SUPERTILE_ANCHORS: [[AnchorPoint; 6]; 9] = [
     [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,0), ap(2,-1,0), ap(2,-2,2)],
 ];
 
+pub const BASE_SUPERTILE_FNS: [fn() -> MarkedTiling<Label>; 9] = [
+    supertile_gamma,
+    supertile_delta,
+    supertile_theta,
+    supertile_lambda,
+    supertile_xi,
+    supertile_pi,
+    supertile_sigma,
+    supertile_phi,
+    supertile_psi,
+];
+
 pub fn supertile_gamma() -> MarkedTiling<Label> {
     let mut t = MarkedTiling::new();
 

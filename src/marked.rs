@@ -65,6 +65,20 @@ impl<L> Default for MarkedTiling<L> {
     }
 }
 
+impl<L: Copy> MarkedTiling<L> {
+    pub fn rotate(&self, n: usize) -> Self {
+        let mut result = Self::new();
+        for (&hex, tile) in &self.tiles {
+            let mut rh = hex;
+            for _ in 0..n {
+                rh = rh.rotate_cw();
+            }
+            result.insert(rh, tile.rotate(n));
+        }
+        result
+    }
+}
+
 impl<L: Clone + Neg<Output = L> + PartialEq> MarkedTiling<L> {
     /// Returns `true` iff every adjacent tile pair satisfies `x == -y` on
     /// their shared edge, where `x` and `y` are the labels seen from each

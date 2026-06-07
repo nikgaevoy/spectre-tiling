@@ -9,7 +9,7 @@ use spectre_tiling::supertile::{
     supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
     AnchorPoint, SUPERTILE_ANCHORS,
 };
-use spectre_tiling::tiling::{tile_id, BASE_TILES, TILE_NAMES};
+use spectre_tiling::tiling::{supersubstitute_with_regions, tile_id, BASE_TILES, TILE_NAMES};
 
 const TILE_COLORS: [egui::Color32; 9] = [
     egui::Color32::from_rgb(0xc8, 0x78, 0x28), // Γ
@@ -173,6 +173,8 @@ struct HexApp {
     zoom: f32,
     // (type_idx, rotation, origin) for each placed supertile, used to render anchors.
     placed_supertiles: Vec<(usize, usize, Hex)>,
+    // Hex sets for each supertile produced by the last Supersubstitute.
+    supertile_regions: Vec<HashSet<Hex>>,
     editable_anchors: [[AnchorPoint; 6]; 9],
     active_anchor_slot: usize,
     hover_corner: Option<(Hex, u8)>,
@@ -195,6 +197,7 @@ impl Default for HexApp {
             pan: egui::Vec2::ZERO,
             zoom: 50.0,
             placed_supertiles: Vec::new(),
+            supertile_regions: Vec::new(),
             editable_anchors: SUPERTILE_ANCHORS,
             active_anchor_slot: 0,
             hover_corner: None,
@@ -490,6 +493,18 @@ impl HexApp {
                 self.tiling = MarkedTiling::new();
                 self.invalid_edges.clear();
                 self.placed_supertiles.clear();
+                self.supertile_regions.clear();
+            }
+            let can_substitute = !self.tiling.tiles.is_empty();
+            if ui
+                .add_enabled(can_substitute, egui::Button::new("Supersubstitute"))
+                .clicked()
+            {
+                let (new_tiling, regions) = supersubstitute_with_regions(&self.tiling);
+                self.tiling = new_tiling;
+                self.invalid_edges = recompute_invalid(&self.tiling);
+                self.placed_supertiles.clear();
+                self.supertile_regions = regions;
             }
             ui.add_space(6.0);
             let n = self.tiling.tiles.len();
@@ -620,6 +635,33 @@ impl HexApp {
                 egui::Color32::from_rgba_unmultiplied(255, 220, 40, alpha),
                 egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha)),
             );
+        }
+    }
+
+    fn draw_supertile_outlines(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        canvas_center: egui::Pos2,
+    ) {
+        let stroke = egui::Stroke::new(
+            (self.zoom * 0.08).max(2.0),
+            egui::Color32::WHITE,
+        );
+        let cull_rect = rect.expand(self.zoom * 2.0);
+        for region in &self.supertile_regions {
+            for &hex in region {
+                let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+                if !cull_rect.contains(sc) {
+                    continue;
+                }
+                for (i, &dir) in DIRECTIONS.iter().enumerate() {
+                    if !region.contains(&(hex + dir)) {
+                        let [a, b] = edge_endpoints(sc, self.zoom, i);
+                        painter.line_segment([a, b], stroke);
+                    }
+                }
+            }
         }
     }
 
@@ -785,6 +827,11 @@ impl eframe::App for HexApp {
                 }
             }
 
+            // Supertile outlines from the last Supersubstitute
+            if !self.supertile_regions.is_empty() {
+                self.draw_supertile_outlines(&painter, rect, canvas_center);
+            }
+
             // Anchor points for placed supertiles
             if self.mode == PlaceMode::Supertile {
                 for &(type_idx, rotation, origin) in &self.placed_supertiles {
@@ -894,28 +941,6 @@ fn main() -> eframe::Result<()> {
                 .with_title("Spectre Hex Tile Editor"),
             ..Default::default()
         },
-        Box::new(|cc| {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "NotoSans".into(),
-                egui::FontData::from_static(include_bytes!(
-                    "../../assets/NotoSans.ttf"
-                )).into(),
-            );
-            fonts.font_data.insert(
-                "NotoSansSymbols".into(),
-                egui::FontData::from_static(include_bytes!(
-                    "../../assets/NotoSansSymbols.ttf"
-                )).into(),
-            );
-            let proportional = fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default();
-            proportional.insert(0, "NotoSans".into());
-            proportional.push("NotoSansSymbols".into());
-            cc.egui_ctx.set_fonts(fonts);
-            Ok(Box::new(HexApp::default()))
-        }),
+        Box::new(|_cc| Ok(Box::new(HexApp::default()))),
     )
 }
