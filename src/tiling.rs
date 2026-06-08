@@ -39,18 +39,12 @@ fn is_compatible(tiling: &MarkedTiling<Label>, pos: Hex, candidate: &MarkedTile<
 /// position bordering `tiling` (i.e., the patch can be extended in all
 /// directions without a dead end at distance 1).
 pub fn frontier_is_extensible(tiling: &MarkedTiling<Label>) -> bool {
-    for &pos in tiling.tiles.keys() {
-        for &dir in &DIRECTIONS {
-            let nb = pos + dir;
-            if tiling.tiles.contains_key(&nb) {
-                continue;
-            }
-            if compatible_ids(tiling, nb).is_empty() {
-                return false;
-            }
-        }
-    }
-    true
+    tiling
+        .tiles
+        .keys()
+        .flat_map(|&pos| DIRECTIONS.iter().map(move |&dir| pos + dir))
+        .filter(|nb| !tiling.tiles.contains_key(nb))
+        .all(|nb| !compatible_ids(tiling, nb).is_empty())
 }
 
 /// All `(type_idx, rotation)` pairs compatible with every existing neighbor at `pos`.
@@ -85,11 +79,7 @@ pub fn generate_patch(target_size: usize) -> MarkedTiling<Label> {
 
     while tiling.tiles.len() < target_size && !frontier.is_empty() {
         // Pick the most-constrained empty position.
-        let pos = *frontier
-            .iter()
-            .max_by_key(|(_, count)| *count)
-            .map(|(p, _)| p)
-            .unwrap();
+        let pos = *frontier.iter().max_by_key(|&(_, &c)| c).unwrap().0;
         frontier.remove(&pos);
 
         // Forward-checking greedy: commit the first option that leaves every
@@ -182,25 +172,27 @@ pub fn infer_supertile_offset(
     // rotation, that rotation is the extra spin `to` needs.  Only when no such
     // 60° rotation exists (e.g. the edge lengths disagree) does no answer
     // exist; that is the assertion case.
+    let ctx = || format!(
+        "from={}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
+         to={}[{to_type}] rot={to_rot}",
+        TILE_NAMES[from_type], TILE_NAMES[to_type],
+    );
+
     let f_vec = (v_f1.0 - v_f2.0, v_f1.1 - v_f2.1);
     let mut tv = (v_t2.0 - v_t1.0, v_t2.1 - v_t1.1);
-    let mut extra: Option<usize> = None;
-    for r in 0..6 {
-        if tv == f_vec {
-            extra = Some(r);
-            break;
-        }
-        tv = rotate_vertex_step(tv);
-    }
-    let from_name = TILE_NAMES[from_type];
-    let to_name = TILE_NAMES[to_type];
-    let extra = extra.unwrap_or_else(|| {
-        panic!(
-            "no 60° rotation aligns the t-anchor edge with the f-anchor edge \
-             (from={from_name}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
-             to={to_name}[{to_type}] rot={to_rot})"
-        )
-    });
+    let extra = (0..6)
+        .find(|_| {
+            if tv == f_vec {
+                true
+            } else {
+                tv = rotate_vertex_step(tv);
+                false
+            }
+        })
+        .unwrap_or_else(|| panic!(
+            "no 60° rotation aligns the t-anchor edge with the f-anchor edge ({})",
+            ctx(),
+        ));
 
     // World position of t2 after the extra rotation; offset = F1 − rotated T2.
     let mut t2 = v_t2;
@@ -209,20 +201,10 @@ pub fn infer_supertile_offset(
     }
     let dx = v_f1.0 - t2.0;
     let dy = v_f1.1 - t2.1;
-    assert!(
-        dy % 3 == 0,
-        "offset is not a hex lattice translation \
-         (from={from_name}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
-         to={to_name}[{to_type}] rot={to_rot})"
-    );
+    assert!(dy % 3 == 0, "offset is not a hex lattice translation ({})", ctx());
     let oy = -dy / 3;
     let two_ox = dx - oy;
-    assert!(
-        two_ox % 2 == 0,
-        "offset is not a hex lattice translation \
-         (from={from_name}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
-         to={to_name}[{to_type}] rot={to_rot})"
-    );
+    assert!(two_ox % 2 == 0, "offset is not a hex lattice translation ({})", ctx());
 
     ((to_rot + extra) % 6, Hex::new(two_ox / 2, oy))
 }
@@ -252,21 +234,23 @@ fn anchor_vertex(ap: AnchorPoint) -> (i32, i32) {
 pub fn supersubstitute_with_regions(
     tiling: &MarkedTiling<Label>,
 ) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
+    let id_at = |pos: &Hex| {
+        tile_id(&tiling.tiles[pos]).expect("unrecognized tile in supersubstitute")
+    };
+
     let mut known: HashMap<Hex, (usize, usize, Hex)> = HashMap::new();
     let mut queue: VecDeque<Hex> = VecDeque::new();
 
     let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
         return (MarkedTiling::new(), Vec::new());
     };
-    let (t0, r0) = tile_id(&tiling.tiles[&start])
-        .expect("unrecognized tile in supersubstitute");
+    let (t0, r0) = id_at(&start);
     known.insert(start, (t0, r0, Hex::new(0, 0)));
     queue.push_back(start);
 
     while let Some(pos_a) = queue.pop_front() {
         let (type_a, super_rot_a, offset_a) = known[&pos_a];
-        let (_, tile_rot_a) = tile_id(&tiling.tiles[&pos_a])
-            .expect("unrecognized tile in supersubstitute");
+        let (_, tile_rot_a) = id_at(&pos_a);
         // `infer_supertile_offset` computes its answer in a frame where A sits
         // at origin with rotation `tile_rot_a` — but in the world A is at
         // `offset_a` with rotation `super_rot_a`.  Convert the returned
@@ -275,8 +259,7 @@ pub fn supersubstitute_with_regions(
         for (d, &dir) in DIRECTIONS.iter().enumerate() {
             let pos_b = pos_a + dir;
             if tiling.tiles.contains_key(&pos_b) && !known.contains_key(&pos_b) {
-                let (type_b, tile_rot_b) = tile_id(&tiling.tiles[&pos_b])
-                    .expect("unrecognized tile in supersubstitute");
+                let (type_b, tile_rot_b) = id_at(&pos_b);
                 let (sr_b_fn, mut delta) =
                     infer_supertile_offset(type_a, tile_rot_a, d, type_b, tile_rot_b);
                 for _ in 0..delta_rot {
@@ -313,6 +296,48 @@ pub fn supersubstitute(tiling: &MarkedTiling<Label>) -> MarkedTiling<Label> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    fn normalize(t: &MarkedTiling<Label>) -> BTreeMap<(i32, i32), [i8; 6]> {
+        let &min_pos = t.tiles.keys().min_by_key(|h| (h.q, h.r)).unwrap();
+        t.tiles
+            .iter()
+            .map(|(&h, tile)| {
+                let p = h - min_pos;
+                ((p.q, p.r), tile.edges.map(|e| e as i8))
+            })
+            .collect()
+    }
+
+    /// Stable 64-bit hash of a tiling, invariant under hex translation and
+    /// 60° rotation.  Canonical form is the lex-min serialization across the
+    /// 6 rotations of `t`, each translated so its min-(q,r) hex sits at the
+    /// origin.  Hashed with FNV-1a so the value is stable across Rust
+    /// versions (unlike `std::hash::DefaultHasher`).
+    fn canonical_hash(t: &MarkedTiling<Label>) -> u64 {
+        let canonical = (0..6)
+            .map(|n| {
+                normalize(&t.rotate(n))
+                    .into_iter()
+                    .flat_map(|((q, r), edges)| {
+                        let mut buf = Vec::with_capacity(4 + 4 + 6);
+                        buf.extend_from_slice(&q.to_le_bytes());
+                        buf.extend_from_slice(&r.to_le_bytes());
+                        buf.extend(edges.iter().map(|&e| e as u8));
+                        buf
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .min()
+            .unwrap();
+
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in canonical {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
 
     #[test]
     fn patch_50_is_valid() {
@@ -371,14 +396,8 @@ mod tests {
         // in scaled vertex coords is 3·X² + Y² (since x_real = √3·X/2,
         // y_real = Y/2).  This is a precondition for `infer_supertile_offset`
         // to find a 60° rotation aligning the two edges.
-        use crate::supertile::{supertile_gamma, AnchorPoint, SUPERTILE_ANCHORS};
+        use crate::supertile::supertile_gamma;
 
-        fn anchor_v(ap: AnchorPoint) -> (i32, i32) {
-            const DX: [i32; 6] = [1, 0, -1, -1, 0, 1];
-            const DY: [i32; 6] = [1, 2, 1, -1, -2, -1];
-            let c = ap.corner as usize;
-            (2 * ap.hex.q + ap.hex.r + DX[c], -3 * ap.hex.r + DY[c])
-        }
         let eucl_sq = |(x, y): (i32, i32)| 3 * x * x + y * y;
 
         let t = supertile_gamma();
@@ -390,10 +409,10 @@ mod tests {
                 let (tb, rb) = tile_id(tile_b).unwrap();
                 let [f1, f2] = edge_corners(d, ra);
                 let [u1, u2] = edge_corners((d + 3) % 6, rb);
-                let vf1 = anchor_v(SUPERTILE_ANCHORS[ta][f1].rotate(ra));
-                let vf2 = anchor_v(SUPERTILE_ANCHORS[ta][f2].rotate(ra));
-                let vt1 = anchor_v(SUPERTILE_ANCHORS[tb][u1].rotate(rb));
-                let vt2 = anchor_v(SUPERTILE_ANCHORS[tb][u2].rotate(rb));
+                let vf1 = anchor_vertex(SUPERTILE_ANCHORS[ta][f1].rotate(ra));
+                let vf2 = anchor_vertex(SUPERTILE_ANCHORS[ta][f2].rotate(ra));
+                let vt1 = anchor_vertex(SUPERTILE_ANCHORS[tb][u1].rotate(rb));
+                let vt2 = anchor_vertex(SUPERTILE_ANCHORS[tb][u2].rotate(rb));
                 let lf = eucl_sq((vf1.0 - vf2.0, vf1.1 - vf2.1));
                 let lt = eucl_sq((vt2.0 - vt1.0, vt2.1 - vt1.1));
                 assert_eq!(
@@ -463,19 +482,6 @@ mod tests {
         // (`HashMap::iter().next()`), which depends on hex coordinates.
         use crate::supertile::supertile_gamma;
 
-        fn normalize(
-            t: &MarkedTiling<Label>,
-        ) -> std::collections::BTreeMap<(i32, i32), [i8; 6]> {
-            let &min_pos = t.tiles.keys().min_by_key(|h| (h.q, h.r)).unwrap();
-            t.tiles
-                .iter()
-                .map(|(&h, tile)| {
-                    let p = h - min_pos;
-                    ((p.q, p.r), tile.edges.map(|e| e as i8))
-                })
-                .collect()
-        }
-
         let base = supertile_gamma();
         let base_result = supersubstitute(&base);
 
@@ -534,19 +540,6 @@ mod tests {
         // locally length-consistent, every individual `infer_supertile_offset`
         // call commutes with rotation, so the whole BFS should too.
         use crate::supertile::supertile_gamma;
-
-        fn normalize(
-            t: &MarkedTiling<Label>,
-        ) -> std::collections::BTreeMap<(i32, i32), [i8; 6]> {
-            let &min_pos = t.tiles.keys().min_by_key(|h| (h.q, h.r)).unwrap();
-            t.tiles
-                .iter()
-                .map(|(&h, tile)| {
-                    let p = h - min_pos;
-                    ((p.q, p.r), tile.edges.map(|e| e as i8))
-                })
-                .collect()
-        }
 
         let base_input = supertile_gamma();
         let base_output = supersubstitute(&base_input);
@@ -664,5 +657,66 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn canonical_hash_is_rigid_motion_invariant() {
+        // Sanity-check `canonical_hash` itself before relying on it for the
+        // 4-iteration regression test: rotating or shifting the input must
+        // not change the hash.
+        use crate::supertile::supertile_gamma;
+
+        let base = supertile_gamma();
+        let h0 = canonical_hash(&base);
+
+        for n in 1..6 {
+            assert_eq!(
+                canonical_hash(&base.rotate(n)),
+                h0,
+                "rotation {n} changes canonical_hash",
+            );
+        }
+
+        for shift in [Hex::new(3, -1), Hex::new(-5, 7), Hex::new(10, 0)] {
+            let mut shifted = MarkedTiling::new();
+            for (&h, tile) in &base.tiles {
+                shifted.insert(h + shift, tile.clone());
+            }
+            assert_eq!(
+                canonical_hash(&shifted),
+                h0,
+                "shift ({},{}) changes canonical_hash",
+                shift.q, shift.r,
+            );
+        }
+    }
+
+    #[test]
+    fn supersubstitute_four_iterations_on_gamma_has_expected_hash() {
+        // Pin the exact output of supersubstitute^4 starting from a single
+        // GAMMA tile.  The hash is canonical under hex translation and 60°
+        // rotation, so it is robust to BFS start-tile choice (HashMap
+        // iteration order) — see
+        // `supersubstitute_commutes_with_input_shift_and_rotation` for why
+        // those are the only sources of nondeterminism.
+        let mut t = MarkedTiling::new();
+        t.insert(Hex::new(0, 0), GAMMA);
+        for _ in 0..4 {
+            t = supersubstitute(&t);
+        }
+        assert!(t.is_valid(), "iterated supersubstitute produced an invalid tiling");
+
+        const EXPECTED_TILES: usize = 3409;
+        const EXPECTED_HASH: u64 = 4960813579813931908;
+        assert_eq!(
+            t.tiles.len(),
+            EXPECTED_TILES,
+            "supersubstitute^4(GAMMA) tile count drifted",
+        );
+        assert_eq!(
+            canonical_hash(&t),
+            EXPECTED_HASH,
+            "supersubstitute^4(GAMMA) hash changed — output content drifted",
+        );
     }
 }
