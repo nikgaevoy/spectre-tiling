@@ -229,10 +229,12 @@ fn anchor_vertex(ap: AnchorPoint) -> (i32, i32) {
 }
 
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
-/// together via BFS.  Returns the new tiling and, for each original tile, the
-/// set of hex positions it expanded into (one `HashSet<Hex>` per supertile).
-pub fn supersubstitute_with_regions(
+/// together via BFS starting at `start`.  The supertile for the tile at
+/// `start` is anchored at world offset `(0,0)`; every other supertile's
+/// position follows from edge constraints via [`infer_supertile_offset`].
+fn supersubstitute_with_regions_from(
     tiling: &MarkedTiling<Label>,
+    start: Hex,
 ) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
     let id_at = |pos: &Hex| {
         tile_id(&tiling.tiles[pos]).expect("unrecognized tile in supersubstitute")
@@ -241,9 +243,6 @@ pub fn supersubstitute_with_regions(
     let mut known: HashMap<Hex, (usize, usize, Hex)> = HashMap::new();
     let mut queue: VecDeque<Hex> = VecDeque::new();
 
-    let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
-        return (MarkedTiling::new(), Vec::new());
-    };
     let (t0, r0) = id_at(&start);
     known.insert(start, (t0, r0, Hex::new(0, 0)));
     queue.push_back(start);
@@ -287,10 +286,50 @@ pub fn supersubstitute_with_regions(
 }
 
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
+/// together via BFS.  Returns the new tiling and, for each original tile, the
+/// set of hex positions it expanded into (one `HashSet<Hex>` per supertile).
+///
+/// The BFS anchor is the lex-min hex of `tiling`, so the absolute positions
+/// in the result depend on which tile happens to sort first.  For an anchor
+/// that preserves the canonical embedding across iterated calls, use
+/// [`canonical_supersubstitute_with_regions`].
+pub fn supersubstitute_with_regions(
+    tiling: &MarkedTiling<Label>,
+) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
+    let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
+        return (MarkedTiling::new(), Vec::new());
+    };
+    supersubstitute_with_regions_from(tiling, start)
+}
+
+/// Replace each tile in `tiling` with the corresponding supertile, stitched
 /// together via BFS.  Positions of individual supertiles are determined by
 /// calling [`infer_supertile_offset`] for each adjacent pair.
 pub fn supersubstitute(tiling: &MarkedTiling<Label>) -> MarkedTiling<Label> {
     supersubstitute_with_regions(tiling).0
+}
+
+/// Canonical variant of [`supersubstitute_with_regions`]: the BFS is anchored
+/// at the tile at world `(0,0)` (which must exist in `tiling`), and that
+/// tile's supertile is placed at world offset `(0,0)`.
+///
+/// Iterating this on an input that is itself canonical (i.e. has a tile at
+/// `(0,0)`) preserves the canonical embedding: the GAMMA at local `(0,0)` of
+/// every supertile chain stays at world `(0,0)`, so after k applications
+/// starting from `{T at (0,0)}` the GAMMA→GAMMA→… leaf lands at `(0,0)`.
+pub fn canonical_supersubstitute_with_regions(
+    tiling: &MarkedTiling<Label>,
+) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
+    assert!(
+        tiling.tiles.contains_key(&Hex::new(0, 0)),
+        "canonical_supersubstitute requires a tile at (0,0)",
+    );
+    supersubstitute_with_regions_from(tiling, Hex::new(0, 0))
+}
+
+/// Canonical [`supersubstitute`]: see [`canonical_supersubstitute_with_regions`].
+pub fn canonical_supersubstitute(tiling: &MarkedTiling<Label>) -> MarkedTiling<Label> {
+    canonical_supersubstitute_with_regions(tiling).0
 }
 
 #[cfg(test)]
@@ -718,5 +757,86 @@ mod tests {
             EXPECTED_HASH,
             "supersubstitute^4(GAMMA) hash changed — output content drifted",
         );
+    }
+
+    /// For every base tile T, `canonical_supersubstitute({T at (0,0)})` must
+    /// reproduce `BASE_SUPERTILE_FNS[T]()` exactly (same tiles at same hex
+    /// positions).  This is the consistency property: each hand-written
+    /// supertile is the canonical order-1 supertile of its root tile.
+    #[test]
+    fn canonical_supersubstitute_matches_base_supertiles() {
+        for (ti, supertile_fn) in BASE_SUPERTILE_FNS.iter().enumerate() {
+            let mut input = MarkedTiling::new();
+            input.insert(Hex::new(0, 0), BASE_TILES[ti].clone());
+
+            let got = canonical_supersubstitute(&input);
+            let expected = supertile_fn();
+
+            assert_eq!(
+                got.tiles.len(),
+                expected.tiles.len(),
+                "supertile {}: tile count differs ({} vs {})",
+                TILE_NAMES[ti], got.tiles.len(), expected.tiles.len(),
+            );
+            for (&hex, tile) in &expected.tiles {
+                let g = got.tiles.get(&hex).unwrap_or_else(|| panic!(
+                    "supertile {}: canonical result missing tile at {:?}",
+                    TILE_NAMES[ti], hex,
+                ));
+                assert_eq!(
+                    g.edges, tile.edges,
+                    "supertile {}: tile differs at {:?}",
+                    TILE_NAMES[ti], hex,
+                );
+            }
+        }
+    }
+
+    /// Iterating `canonical_supersubstitute` k times starting from
+    /// `{GAMMA at (0,0)}` must keep GAMMA (rotation 0) pinned at world `(0,0)`
+    /// at every k.  That is the defining property of the canonical embedding.
+    #[test]
+    fn canonical_supersubstitute_pins_gamma_at_origin() {
+        let mut t = MarkedTiling::new();
+        t.insert(Hex::new(0, 0), GAMMA);
+
+        for k in 1..=4 {
+            t = canonical_supersubstitute(&t);
+            let at_origin = t.tiles.get(&Hex::new(0, 0)).unwrap_or_else(|| {
+                panic!("after k={k} canonical iterations, no tile at (0,0)")
+            });
+            assert_eq!(
+                tile_id(at_origin),
+                Some((0, 0)),
+                "after k={k} canonical iterations, tile at (0,0) is not GAMMA rotation 0"
+            );
+            assert!(t.is_valid(), "k={k}: canonical result is not edge-consistent");
+        }
+    }
+
+    /// The canonical variant and the lex-min variant must produce the same
+    /// tiling up to a hex translation — only the choice of which tile sits at
+    /// world (0,0) differs.
+    #[test]
+    fn canonical_supersubstitute_matches_supersubstitute_up_to_shift() {
+        use crate::supertile::supertile_gamma;
+
+        for input in [supertile_gamma(), {
+            let mut t = MarkedTiling::new();
+            t.insert(Hex::new(0, 0), GAMMA);
+            t
+        }] {
+            let canonical = canonical_supersubstitute(&input);
+            let plain = supersubstitute(&input);
+            assert_eq!(canonical_hash(&canonical), canonical_hash(&plain));
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "tile at (0,0)")]
+    fn canonical_supersubstitute_requires_origin_tile() {
+        let mut input = MarkedTiling::new();
+        input.insert(Hex::new(1, 0), GAMMA);
+        let _ = canonical_supersubstitute(&input);
     }
 }

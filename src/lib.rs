@@ -4,3 +4,4 @@ pub mod spectre;
 pub mod svg;
 pub mod tiling;
 pub mod supertile;
+pub mod tree_coords;
