@@ -284,6 +284,22 @@ impl HexApp {
                 color,
                 egui::Stroke::new(1.5, egui::Color32::BLACK),
             ));
+            let name_galley = preview_painter.layout_no_wrap(
+                TILE_NAMES[self.brush.type_idx].to_string(),
+                egui::FontId::proportional(pz * 0.42),
+                egui::Color32::WHITE,
+            );
+            let nsz = name_galley.size();
+            let angle = -(self.brush.rotation as f32) * std::f32::consts::PI / 3.0;
+            let (cos_a, sin_a) = (angle.cos(), angle.sin());
+            let name_pos = egui::pos2(
+                pc.x - (nsz.x / 2.0 * cos_a - nsz.y / 2.0 * sin_a),
+                pc.y - (nsz.x / 2.0 * sin_a + nsz.y / 2.0 * cos_a),
+            );
+            let mut name_shape =
+                egui::epaint::TextShape::new(name_pos, name_galley, egui::Color32::WHITE);
+            name_shape.angle = angle;
+            preview_painter.add(egui::Shape::Text(name_shape));
             for i in 0..6 {
                 let [a, b] = edge_endpoints(pc, pz, i);
                 let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
@@ -342,6 +358,7 @@ impl HexApp {
             ui.small("Right-click: erase");
             ui.small("Drag: pan");
             ui.small("Scroll: zoom");
+            ui.small("Q / E: rotate CCW / CW");
         });
     }
 
@@ -490,7 +507,8 @@ impl HexApp {
                     egui::epaint::TextShape::new(pos, galley, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200));
                 text_shape.angle = angle;
                 painter.add(egui::Shape::Text(text_shape));
-
+            }
+            if zoom > 35.0 {
                 let font_size = (zoom * 0.20).max(8.0);
                 for i in 0..6 {
                     let [a, b] = edge_endpoints(sc, zoom, i);
@@ -521,6 +539,16 @@ impl HexApp {
         self.hover_hex = response
             .hover_pos()
             .map(|pos| screen_to_hex(pos, self.zoom, self.pan, canvas_center));
+
+        // Keyboard rotation: Q = CCW, E = CW
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Q) {
+                self.brush.rotation = (self.brush.rotation + 1) % 6;
+            }
+            if i.key_pressed(egui::Key::E) {
+                self.brush.rotation = (self.brush.rotation + 5) % 6;
+            }
+        });
 
         // Pan via drag
         self.pan += response.drag_delta();
@@ -580,11 +608,6 @@ impl eframe::App for HexApp {
                 self.draw_hex(&painter, hex, sc);
             }
 
-            for &hex in &hexes {
-                let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
-                self.draw_invalid_edges(&painter, hex, sc);
-            }
-
             if self.zoom > 35.0 {
                 for &hex in &hexes {
                     if let Some(tile) = self.tiling.tiles.get(&hex).cloned() {
@@ -597,6 +620,12 @@ impl eframe::App for HexApp {
             // Supertile outlines from the last Supersubstitute
             if !self.supertile_regions.is_empty() {
                 self.draw_supertile_outlines(&painter, rect, canvas_center);
+            }
+
+            // Invalid edges drawn last so red bad edges paint over supertile outlines.
+            for &hex in &hexes {
+                let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+                self.draw_invalid_edges(&painter, hex, sc);
             }
 
             // Ghost preview of pending placement at hover position
