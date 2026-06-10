@@ -86,6 +86,23 @@ fn zd_screen(p: Zd, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> eg
     canvas_center + pan + egui::vec2(x as f32 * zoom, -y as f32 * zoom)
 }
 
+// Ray-casting point-in-polygon test (the spectre is concave, so a convex
+// test won't do).
+fn point_in_polygon(p: egui::Pos2, pts: &[egui::Pos2]) -> bool {
+    let mut inside = false;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        let (a, b) = (pts[i], pts[j]);
+        if (a.y > p.y) != (b.y > p.y)
+            && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 fn screen_to_hex(pos: egui::Pos2, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> Hex {
     let v = pos - canvas_center - pan;
     let wx = v.x / zoom;
@@ -295,6 +312,9 @@ struct HexApp {
     // within it).  Derived from the same tree state; the seed spectre of
     // hex (0,0) is pinned, so re-derivation is deterministic.
     spectre_cache: HashMap<(Hex, u8), [Zd; 14]>,
+    // Spectre under the cursor (hit-tested in the spectre plane, where the
+    // hex-grid hover is meaningless).
+    hover_spectre: Option<(Hex, u8)>,
     show_borders: bool,
     show_names: bool,
     show_edge_labels: bool,
@@ -321,6 +341,7 @@ impl Default for HexApp {
             tree_path: Vec::new(),
             tree_cache: HashMap::new(),
             spectre_cache: HashMap::new(),
+            hover_spectre: None,
             show_borders: true,
             show_names: true,
             show_edge_labels: false,
@@ -613,9 +634,9 @@ impl HexApp {
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
             ));
 
+            let cx = pts.iter().map(|p| p.x).sum::<f32>() / 14.0;
+            let cy = pts.iter().map(|p| p.y).sum::<f32>() / 14.0;
             if self.show_names && self.zoom > 18.0 {
-                let cx = pts.iter().map(|p| p.x).sum::<f32>() / 14.0;
-                let cy = pts.iter().map(|p| p.y).sum::<f32>() / 14.0;
                 painter.text(
                     egui::pos2(cx, cy),
                     egui::Align2::CENTER_CENTER,
@@ -623,6 +644,49 @@ impl HexApp {
                     egui::FontId::proportional(self.zoom * 0.6),
                     egui::Color32::WHITE,
                 );
+            }
+
+            if self.show_paths && self.zoom > 18.0 {
+                let mut label = coords_str(self.tree_top, &tile.coords);
+                if tile.type_idx == 0 {
+                    // Which of Γ's pair, as a subscript on the leaf step.
+                    label.push(if idx == 0 { '₀' } else { '₁' });
+                }
+                painter.text(
+                    egui::pos2(cx, cy + self.zoom * 0.55),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::monospace(self.zoom * 0.28),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                );
+            }
+
+            // Each boundary edge carries the marked label of the hexagon
+            // edge it lies on (Γ's internal pair edge carries none).
+            if self.show_edge_labels && self.zoom > 35.0 {
+                let smap = SPECMAP[tile.type_idx as usize];
+                let base = &BASE_TILES[tile.type_idx as usize];
+                let font_size = (self.zoom * 0.20).max(8.0);
+                for edge in 0..14usize {
+                    let me = smap[14 * idx as usize + edge];
+                    if me.internal {
+                        continue;
+                    }
+                    let delta = our_direction(me.hi as usize);
+                    let (a, b) = (pts[edge], pts[(edge + 1) % 14]);
+                    let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+                    // Inward normal: interior is on the rot-90° side of
+                    // every directed edge (constant winding, no mirrors).
+                    let d = b - a;
+                    let n = egui::vec2(-d.y, d.x) / d.length().max(1e-6);
+                    painter.text(
+                        mid + n * (self.zoom * 0.28),
+                        egui::Align2::CENTER_CENTER,
+                        label_str(base.edges[delta]),
+                        egui::FontId::proportional(font_size),
+                        egui::Color32::from_rgb(20, 20, 20),
+                    );
+                }
             }
 
             if self.show_borders {
@@ -916,6 +980,29 @@ impl HexApp {
                 match hovered {
                     Some(tile) => {
                         ui.monospace(coords_str(self.tree_top, &tile.coords));
+                    }
+                    None => {
+                        ui.monospace("hover a tile");
+                    }
+                }
+            } else if self.mode == Mode::Spectre {
+                ui.add_space(8.0);
+                ui.heading("TreeCoords");
+                ui.separator();
+                let hovered = self.hover_spectre.and_then(|(hex, idx)| {
+                    self.tree_cache
+                        .get(&hex)
+                        .and_then(Option::as_ref)
+                        .map(|tile| (tile, idx))
+                });
+                match hovered {
+                    Some((tile, idx)) => {
+                        let mut s = coords_str(self.tree_top, &tile.coords);
+                        if tile.type_idx == 0 {
+                            // Which of Γ's pair, as a subscript on the leaf step.
+                            s.push(if idx == 0 { '₀' } else { '₁' });
+                        }
+                        ui.monospace(s);
                     }
                     None => {
                         ui.monospace("hover a tile");
@@ -1339,6 +1426,21 @@ impl eframe::App for HexApp {
                 }
             } else if self.mode == Mode::Spectre {
                 self.spectre_fill(rect, canvas_center);
+                self.hover_spectre = response.hover_pos().and_then(|pos| {
+                    self.spectre_cache.iter().find_map(|(&key, poly)| {
+                        // Cheap pre-filter: the whole tile is within ~5
+                        // edge units of vertex 0.
+                        let v0 = zd_screen(poly[0], self.zoom, self.pan, canvas_center);
+                        if v0.distance(pos) > 6.0 * self.zoom {
+                            return None;
+                        }
+                        let pts: Vec<egui::Pos2> = poly
+                            .iter()
+                            .map(|&p| zd_screen(p, self.zoom, self.pan, canvas_center))
+                            .collect();
+                        point_in_polygon(pos, &pts).then_some(key)
+                    })
+                });
                 self.draw_spectres(&painter, rect, canvas_center);
             } else {
                 for &hex in &hexes {
