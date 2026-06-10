@@ -4,6 +4,9 @@ use eframe::egui;
 use spectre_tiling::hex::{Hex, DIRECTIONS};
 use spectre_tiling::marked::{MarkedTile, MarkedTiling};
 use spectre_tiling::spectre::Label;
+use spectre_tiling::spectre_geom::{
+    our_direction, spectre_place, spectre_step, Zd, SPECMAP, SPECTRE_TRIANGLES,
+};
 use spectre_tiling::supertile::{
     supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi,
     supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
@@ -75,6 +78,12 @@ fn hex_to_screen(hex: Hex, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2
     let wx = sqrt3 * hex.q as f32 + sqrt3 / 2.0 * hex.r as f32;
     let wy = -1.5 * hex.r as f32;
     canvas_center + pan + egui::vec2(wx * zoom, wy * zoom)
+}
+
+// Spectre-plane point (math y-up, unit = spectre edge) to screen.
+fn zd_screen(p: Zd, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> egui::Pos2 {
+    let (x, y) = p.to_xy();
+    canvas_center + pan + egui::vec2(x as f32 * zoom, -y as f32 * zoom)
 }
 
 fn screen_to_hex(pos: egui::Pos2, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> Hex {
@@ -244,6 +253,9 @@ enum Mode {
     // Generated mode: no stored tiling — the picture is derived on the fly
     // by the transducer from the TreeCoords of the tile pinned at hex (0,0).
     Tree,
+    // The same generated tiling, rendered as actual spectre tiles (one per
+    // hexagon, two for Γ) placed by BFS gluing in the spectre plane.
+    Spectre,
     // Free-form editor over a stored tiling.
     Tiling,
 }
@@ -279,6 +291,10 @@ struct HexApp {
     tree_top: u8,
     tree_path: Vec<u8>,
     tree_cache: HashMap<Hex, Option<TreeTile>>,
+    // Spectre-mode memo: placed spectre polygons keyed by (hexagon, index
+    // within it).  Derived from the same tree state; the seed spectre of
+    // hex (0,0) is pinned, so re-derivation is deterministic.
+    spectre_cache: HashMap<(Hex, u8), [Zd; 14]>,
     show_borders: bool,
     show_names: bool,
     show_edge_labels: bool,
@@ -304,6 +320,7 @@ impl Default for HexApp {
             tree_top: 0,
             tree_path: Vec::new(),
             tree_cache: HashMap::new(),
+            spectre_cache: HashMap::new(),
             show_borders: true,
             show_names: true,
             show_edge_labels: false,
@@ -379,6 +396,9 @@ impl HexApp {
         for tile in self.tree_cache.values_mut().flatten() {
             tile.coords.path.insert(0, i);
         }
+        // Re-derived from the pinned seed; surviving spectres reappear in
+        // the same places.
+        self.spectre_cache.clear();
     }
 
     // Shrink the context: drop the leading step, keeping only the tiles of
@@ -394,6 +414,7 @@ impl HexApp {
         for tile in self.tree_cache.values_mut().flatten() {
             tile.coords.path.remove(0);
         }
+        self.spectre_cache.clear();
     }
 
     // Shrink all the way: just the pinned (0,0) tile, path ε.
@@ -401,14 +422,11 @@ impl HexApp {
         self.tree_top = self.tree_leaf_type();
         self.tree_path.clear();
         self.tree_cache.clear();
+        self.spectre_cache.clear();
     }
 
-    // Extend the generated picture over `rect`: walk hex adjacency with the
-    // transducer outward from the already computed region (initially the
-    // pinned (0,0) tile), memoizing both tiles and absences.  If nothing
-    // computed is on screen, the walk is let in from the seed.
-    fn tree_fill(&mut self, rect: egui::Rect, canvas_center: egui::Pos2) {
-        let t = Transducer::global();
+    // Seed the tree cache with the pinned (0,0) tile if absent.
+    fn tree_ensure_seed(&mut self) {
         let seed = Hex::new(0, 0);
         if !self.tree_cache.contains_key(&seed) {
             self.tree_cache.insert(
@@ -420,6 +438,42 @@ impl HexApp {
                 }),
             );
         }
+    }
+
+    // (type, world rotation) of the hexagon across world direction `w` from
+    // `from`, extending the tree cache via the transducer on a miss.
+    fn tree_neighbor_tile(
+        tree: &mut HashMap<Hex, Option<TreeTile>>,
+        top: u8,
+        from: Hex,
+        w: usize,
+    ) -> Option<(u8, u8)> {
+        let nb = from + DIRECTIONS[w];
+        if let Some(e) = tree.get(&nb) {
+            return e.as_ref().map(|t| (t.type_idx, t.rot));
+        }
+        let tile = tree.get(&from)?.clone()?;
+        let delta = ((w + 6 - tile.rot as usize) % 6) as u8;
+        let entry = Transducer::global()
+            .neighbor(top, &tile.coords, delta)
+            .map(|(nc, back)| TreeTile {
+                type_idx: *types_along(top, &nc.path).last().unwrap(),
+                rot: ((w + 9 - back as usize) % 6) as u8,
+                coords: nc,
+            });
+        let res = entry.as_ref().map(|t| (t.type_idx, t.rot));
+        tree.insert(nb, entry);
+        res
+    }
+
+    // Extend the generated picture over `rect`: walk hex adjacency with the
+    // transducer outward from the already computed region (initially the
+    // pinned (0,0) tile), memoizing both tiles and absences.  If nothing
+    // computed is on screen, the walk is let in from the seed.
+    fn tree_fill(&mut self, rect: egui::Rect, canvas_center: egui::Pos2) {
+        let t = Transducer::global();
+        self.tree_ensure_seed();
+        let seed = Hex::new(0, 0);
         let mut bound = rect.expand(4.0 * self.zoom);
         let mut queue: VecDeque<Hex> = VecDeque::new();
         for (&h, e) in &self.tree_cache {
@@ -454,6 +508,143 @@ impl HexApp {
                     queue.push_back(nb);
                 }
             }
+        }
+    }
+
+    // Extend the spectre patch over `rect` by BFS gluing from the pinned
+    // seed spectre (#0 of the hexagon at (0,0), edge 0 fixed at the origin),
+    // deriving hexagon adjacency from the tree cache (extended on demand by
+    // the transducer).  The hex grid and the spectre plane have different
+    // geometries, so coverage is bounded by spectre screen positions.
+    fn spectre_fill(&mut self, rect: egui::Rect, canvas_center: egui::Pos2) {
+        self.tree_ensure_seed();
+        let top = self.tree_top;
+        let (zoom, pan) = (self.zoom, self.pan);
+        let mut tree = std::mem::take(&mut self.tree_cache);
+
+        let seed_key = (Hex::new(0, 0), 0u8);
+        self.spectre_cache
+            .entry(seed_key)
+            .or_insert_with(|| spectre_place(Zd::ZERO, Zd::ONE, 0));
+
+        let mut bound = rect.expand(4.0 * zoom);
+        let mut queue: VecDeque<(Hex, u8)> = self
+            .spectre_cache
+            .iter()
+            .filter(|(_, poly)| bound.contains(zd_screen(poly[0], zoom, pan, canvas_center)))
+            .map(|(&k, _)| k)
+            .collect();
+        if queue.is_empty() {
+            let sc = zd_screen(self.spectre_cache[&seed_key][0], zoom, pan, canvas_center);
+            bound = bound.union(egui::Rect::from_min_max(sc, sc).expand(zoom));
+            queue.push_back(seed_key);
+        }
+
+        while let Some((hex, idx)) = queue.pop_front() {
+            let poly = self.spectre_cache[&(hex, idx)];
+            let Some(Some(tile)) = tree.get(&hex).cloned() else { continue };
+            for edge in 0..14u8 {
+                let step = spectre_step(
+                    hex,
+                    (tile.type_idx, tile.rot),
+                    idx,
+                    edge,
+                    &mut |f, w| Self::tree_neighbor_tile(&mut tree, top, f, w),
+                );
+                let Some((h2, i2, e2)) = step else { continue };
+                if self.spectre_cache.contains_key(&(h2, i2)) {
+                    continue;
+                }
+                let p2 = spectre_place(
+                    poly[(edge as usize + 1) % 14],
+                    poly[edge as usize],
+                    e2 as usize,
+                );
+                if !bound.contains(zd_screen(p2[0], zoom, pan, canvas_center)) {
+                    continue;
+                }
+                self.spectre_cache.insert((h2, i2), p2);
+                queue.push_back((h2, i2));
+            }
+        }
+
+        self.tree_cache = tree;
+    }
+
+    // Draw the placed spectres: filled via the fixed triangulation (the
+    // 14-gon is concave), outlined, named after their hexagon's type, with
+    // supertile borders of every order on top (a spectre edge inherits the
+    // order of the hexagon edge it crosses; Γ's internal pair edge and
+    // sibling borders stay plain).
+    fn draw_spectres(&self, painter: &egui::Painter, rect: egui::Rect, canvas_center: egui::Pos2) {
+        let t = Transducer::global();
+        let cull = rect.expand(4.0 * self.zoom);
+        let mut border_segs: Vec<(usize, [egui::Pos2; 2])> = Vec::new();
+        for (&(hex, idx), poly) in &self.spectre_cache {
+            let pts: Vec<egui::Pos2> = poly
+                .iter()
+                .map(|&p| zd_screen(p, self.zoom, self.pan, canvas_center))
+                .collect();
+            if !pts.iter().any(|p| cull.contains(*p)) {
+                continue;
+            }
+            let Some(Some(tile)) = self.tree_cache.get(&hex) else { continue };
+            let base = TILE_COLORS[tile.type_idx as usize];
+            let color = if idx == 1 {
+                // Γ's second spectre: the rare odd-orientation partner.
+                egui::Color32::from_rgb(
+                    (base.r() as u32 * 3 / 5) as u8,
+                    (base.g() as u32 * 3 / 5) as u8,
+                    (base.b() as u32 * 3 / 5) as u8,
+                )
+            } else {
+                base
+            };
+            let mut mesh = egui::epaint::Mesh::default();
+            for &p in &pts {
+                mesh.colored_vertex(p, color);
+            }
+            for tri in SPECTRE_TRIANGLES {
+                mesh.indices.extend(tri.map(|i| i as u32));
+            }
+            painter.add(egui::Shape::mesh(mesh));
+            painter.add(egui::Shape::closed_line(
+                pts.clone(),
+                egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
+            ));
+
+            if self.show_names && self.zoom > 18.0 {
+                let cx = pts.iter().map(|p| p.x).sum::<f32>() / 14.0;
+                let cy = pts.iter().map(|p| p.y).sum::<f32>() / 14.0;
+                painter.text(
+                    egui::pos2(cx, cy),
+                    egui::Align2::CENTER_CENTER,
+                    TILE_NAMES[tile.type_idx as usize],
+                    egui::FontId::proportional(self.zoom * 0.6),
+                    egui::Color32::WHITE,
+                );
+            }
+
+            if self.show_borders {
+                let smap = SPECMAP[tile.type_idx as usize];
+                for edge in 0..14usize {
+                    let me = smap[14 * idx as usize + edge];
+                    if me.internal {
+                        continue;
+                    }
+                    let delta = our_direction(me.hi as usize) as u8;
+                    let order = t.border_order(self.tree_top, &tile.coords, delta);
+                    if order > 0 {
+                        border_segs.push((order, [pts[edge], pts[(edge + 1) % 14]]));
+                    }
+                }
+            }
+        }
+        border_segs.sort_unstable_by_key(|&(order, _)| order);
+        for (order, seg) in border_segs {
+            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt())
+                .min(self.zoom * 0.4);
+            painter.line_segment(seg, egui::Stroke::new(width, egui::Color32::WHITE));
         }
     }
 
@@ -675,6 +866,7 @@ impl HexApp {
             ui.separator();
             for &(label, mode) in &[
                 ("Tree", Mode::Tree),
+                ("Spectre", Mode::Spectre),
                 ("Tiling", Mode::Tiling),
             ] {
                 let selected = self.mode == mode;
@@ -695,10 +887,10 @@ impl HexApp {
                 }
             }
 
-            if self.mode == Mode::Tree {
-                self.context_controls(ui);
-            } else {
+            if self.mode == Mode::Tiling {
                 self.brush_controls(ui);
+            } else {
+                self.context_controls(ui);
             }
 
             ui.add_space(8.0);
@@ -713,10 +905,10 @@ impl HexApp {
                 self.pan = egui::Vec2::ZERO;
             }
 
-            ui.add_space(8.0);
-            ui.heading("TreeCoords");
-            ui.separator();
             if self.mode == Mode::Tree {
+                ui.add_space(8.0);
+                ui.heading("TreeCoords");
+                ui.separator();
                 let hovered = self
                     .hover_hex
                     .and_then(|h| self.tree_cache.get(&h))
@@ -729,7 +921,10 @@ impl HexApp {
                         ui.monospace("hover a tile");
                     }
                 }
-            } else {
+            } else if self.mode == Mode::Tiling {
+                ui.add_space(8.0);
+                ui.heading("TreeCoords");
+                ui.separator();
                 match &self.tracked {
                     Some(tr) => {
                         let depth = tr.coords.values().next().map_or(0, TreeCoords::depth);
@@ -754,15 +949,15 @@ impl HexApp {
 
             ui.add_space(8.0);
             ui.separator();
-            if self.mode == Mode::Tree {
-                ui.monospace("Drag: pan");
-                ui.monospace("Scroll: zoom");
-            } else {
+            if self.mode == Mode::Tiling {
                 ui.monospace("Left-click: place");
                 ui.monospace("Right-click: erase");
                 ui.monospace("Drag: pan");
                 ui.monospace("Scroll: zoom");
                 ui.monospace("Q / E: rotate CCW / CW");
+            } else {
+                ui.monospace("Drag: pan");
+                ui.monospace("Scroll: zoom");
             }
         });
     }
@@ -1044,8 +1239,9 @@ impl HexApp {
             }
         }
 
-        // Tree mode is read-only: the tiling is generated, not edited.
-        if self.mode == Mode::Tree {
+        // Tree and Spectre modes are read-only: the tiling is generated,
+        // not edited.
+        if self.mode != Mode::Tiling {
             return;
         }
 
@@ -1141,6 +1337,9 @@ impl eframe::App for HexApp {
                         },
                     );
                 }
+            } else if self.mode == Mode::Spectre {
+                self.spectre_fill(rect, canvas_center);
+                self.draw_spectres(&painter, rect, canvas_center);
             } else {
                 for &hex in &hexes {
                     let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
@@ -1315,5 +1514,33 @@ mod tests {
         app.tree_strip();
         assert_eq!((app.tree_top, app.tree_path.len()), (0, 0));
         assert_eq!(some_count(&app), 1);
+    }
+
+    /// Spectre mode: the depth-2 patch yields one spectre per hexagon plus
+    /// one extra per Γ, all glued from the pinned seed.
+    #[test]
+    fn spectre_mode_generates_patch() {
+        let mut app = HexApp {
+            zoom: 20.0,
+            mode: Mode::Spectre,
+            ..Default::default()
+        };
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 800.0));
+        app.tree_prepend(1, 0); // Γ → child 0 of Δ
+        app.tree_prepend(0, 5); // Δ → child 5 of Γ
+        app.spectre_fill(rect, rect.center());
+
+        let tiles: Vec<_> = app.tree_cache.values().flatten().collect();
+        assert_eq!(tiles.len(), 55);
+        let gammas = tiles.iter().filter(|t| t.type_idx == 0).count();
+        assert_eq!(gammas, 7);
+        assert_eq!(app.spectre_cache.len(), 55 + gammas);
+
+        // Every spectre belongs to a present hexagon, and every Γ hexagon
+        // carries exactly its mystic pair.
+        for &(hex, idx) in app.spectre_cache.keys() {
+            let tile = app.tree_cache[&hex].as_ref().unwrap();
+            assert!(idx < if tile.type_idx == 0 { 2 } else { 1 });
+        }
     }
 }
