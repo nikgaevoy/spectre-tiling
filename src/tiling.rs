@@ -305,20 +305,30 @@ pub fn placement_cells(placement: &Placement) -> HashSet<Hex> {
 }
 
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
-/// together via BFS.  Returns the new tiling and, for each original tile, the
-/// set of hex positions it expanded into (one `HashSet<Hex>` per supertile).
+/// together via BFS.  Returns the new tiling and, keyed by source-tile
+/// position, the [`Placement`] of the supertile that tile expanded into.
 ///
 /// The BFS anchor is the lex-min hex of `tiling`, so the absolute positions
 /// in the result depend on which tile happens to sort first.  For an anchor
 /// that preserves the canonical embedding across iterated calls, use
-/// [`canonical_supersubstitute_with_regions`].
+/// [`canonical_supersubstitute_with_placements`].
+pub fn supersubstitute_with_placements(
+    tiling: &MarkedTiling<Label>,
+) -> (MarkedTiling<Label>, HashMap<Hex, Placement>) {
+    let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
+        return (MarkedTiling::new(), HashMap::new());
+    };
+    supersubstitute_with_placements_from(tiling, start)
+}
+
+/// Replace each tile in `tiling` with the corresponding supertile, stitched
+/// together via BFS.  Returns the new tiling and, for each original tile, the
+/// set of hex positions it expanded into (one `HashSet<Hex>` per supertile).
+/// See [`supersubstitute_with_placements`] for the anchoring rules.
 pub fn supersubstitute_with_regions(
     tiling: &MarkedTiling<Label>,
 ) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
-    let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
-        return (MarkedTiling::new(), Vec::new());
-    };
-    let (result, placements) = supersubstitute_with_placements_from(tiling, start);
+    let (result, placements) = supersubstitute_with_placements(tiling);
     let regions = placements.values().map(placement_cells).collect();
     (result, regions)
 }

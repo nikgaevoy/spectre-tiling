@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use eframe::egui;
 use spectre_tiling::hex::{Hex, DIRECTIONS};
@@ -8,7 +8,11 @@ use spectre_tiling::supertile::{
     supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi,
     supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
 };
-use spectre_tiling::tiling::{supersubstitute_with_regions, tile_id, BASE_TILES, TILE_NAMES};
+use spectre_tiling::tiling::{
+    placement_cells, supersubstitute_with_placements, tile_id, BASE_TILES, TILE_NAMES,
+};
+use spectre_tiling::transducer::Transducer;
+use spectre_tiling::tree_coords::{types_along, TreeCoords, SUPERTILE_CHILDREN};
 
 const TILE_COLORS: [egui::Color32; 9] = [
     egui::Color32::from_rgb(0xc8, 0x78, 0x28), // Γ
@@ -130,6 +134,75 @@ fn recompute_invalid(tiling: &MarkedTiling<Label>) -> HashSet<(Hex, usize)> {
     bad
 }
 
+// TreeCoords tracking.  Present only while the tiling is a single coherent
+// substitution patch: seeded when a tile or supertile is placed on an empty
+// canvas, recomputed by Supersubstitute, dropped on any free-form edit.
+struct TreeState {
+    // Type of the top-level supertile the paths descend from.
+    top: u8,
+    coords: HashMap<Hex, TreeCoords>,
+    // False right after placement (paths are definitional); true once the
+    // paths have been recomputed by the transducer walk.
+    via_transducer: bool,
+}
+
+// All TreeCoords of `tiling` recovered from a single known seed by walking
+// hex adjacency with the finite-state transducer: a tile's world rotation
+// (from `tile_id`) converts each world direction into a leaf edge in the
+// tile's base frame, and `Transducer::neighbor` yields the adjacent path.
+// Returns `None` unless the walk covers every tile consistently — i.e. the
+// tiling really is one substitution patch under top-level type `top`.
+fn transducer_coords(
+    top: u8,
+    seed_hex: Hex,
+    seed: TreeCoords,
+    tiling: &MarkedTiling<Label>,
+) -> Option<HashMap<Hex, TreeCoords>> {
+    let t = Transducer::global();
+    let mut coords = HashMap::with_capacity(tiling.tiles.len());
+    coords.insert(seed_hex, seed);
+    let mut queue = VecDeque::from([seed_hex]);
+    while let Some(hex) = queue.pop_front() {
+        let (_, rho) = tile_id(tiling.tiles.get(&hex)?)?;
+        let cur = coords[&hex].clone();
+        for (w, &dir) in DIRECTIONS.iter().enumerate() {
+            let nb = hex + dir;
+            if !tiling.tiles.contains_key(&nb) {
+                continue;
+            }
+            let delta = ((w + 6 - rho) % 6) as u8;
+            let Some((nc, _)) = t.neighbor(top, &cur, delta) else {
+                continue;
+            };
+            match coords.get(&nb) {
+                Some(prev) if *prev != nc => return None,
+                Some(_) => {}
+                None => {
+                    coords.insert(nb, nc);
+                    queue.push_back(nb);
+                }
+            }
+        }
+    }
+    (coords.len() == tiling.tiles.len()).then_some(coords)
+}
+
+// Path as the tile name of the child picked at each level (root-first), with
+// the child index as a superscript — names alone are ambiguous because a
+// supertile can contain two children of the same type; "ε" for the root.
+fn coords_str(top: u8, c: &TreeCoords) -> String {
+    const SUP: [char; 8] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷'];
+    if c.path.is_empty() {
+        return "ε".to_string();
+    }
+    let types = types_along(top, &c.path);
+    c.path
+        .iter()
+        .zip(&types[1..])
+        .map(|(&i, &t)| format!("{}{}", TILE_NAMES[t as usize], SUP[i as usize]))
+        .collect()
+}
+
 fn label_str(label: Label) -> &'static str {
     match label {
         Label::Alpha => "α",
@@ -171,6 +244,7 @@ struct HexApp {
     zoom: f32,
     // Hex sets for each supertile produced by the last Supersubstitute.
     supertile_regions: Vec<HashSet<Hex>>,
+    tree: Option<TreeState>,
 }
 
 impl Default for HexApp {
@@ -187,6 +261,7 @@ impl Default for HexApp {
             pan: egui::Vec2::ZERO,
             zoom: 50.0,
             supertile_regions: Vec::new(),
+            tree: None,
         }
     }
 }
@@ -206,6 +281,32 @@ impl HexApp {
             PlaceMode::Supertile => {
                 rotate_tiling(&BASE_SUPERTILE_FNS[self.brush.type_idx](), self.brush.rotation)
             }
+        }
+    }
+
+    // TreeCoords of a brush patch just placed at `at` on an empty canvas:
+    // a single tile is the (empty-path) top supertile itself; a base
+    // supertile gives each child its one-step path.
+    fn placed_tree_state(&self, at: Hex) -> TreeState {
+        let mut coords = HashMap::new();
+        match self.mode {
+            PlaceMode::Single => {
+                coords.insert(at, TreeCoords::new());
+            }
+            PlaceMode::Supertile => {
+                for (i, ch) in SUPERTILE_CHILDREN[self.brush.type_idx].iter().enumerate() {
+                    let mut h = ch.hex;
+                    for _ in 0..self.brush.rotation {
+                        h = h.rotate_cw();
+                    }
+                    coords.insert(h + at, TreeCoords { path: vec![i as u8] });
+                }
+            }
+        }
+        TreeState {
+            top: self.brush.type_idx as u8,
+            coords,
+            via_transducer: false,
         }
     }
 
@@ -326,16 +427,27 @@ impl HexApp {
                 self.tiling = MarkedTiling::new();
                 self.invalid_edges.clear();
                 self.supertile_regions.clear();
+                self.tree = None;
             }
             let can_substitute = !self.tiling.tiles.is_empty();
             if ui
                 .add_enabled(can_substitute, egui::Button::new("Supersubstitute"))
                 .clicked()
             {
-                let (new_tiling, regions) = supersubstitute_with_regions(&self.tiling);
+                let (new_tiling, placements) = supersubstitute_with_placements(&self.tiling);
+                // Re-derive every tile's TreeCoords from a single seed: child 0
+                // of any expanded supertile sits at the placement offset (its
+                // local (0,0)) with path = source path + 0.
+                self.tree = self.tree.take().and_then(|tree| {
+                    let (&src, pl) = placements.iter().next()?;
+                    let mut seed = tree.coords.get(&src)?.clone();
+                    seed.push(0);
+                    let coords = transducer_coords(tree.top, pl.offset, seed, &new_tiling)?;
+                    Some(TreeState { top: tree.top, coords, via_transducer: true })
+                });
+                self.supertile_regions = placements.values().map(placement_cells).collect();
                 self.tiling = new_tiling;
                 self.invalid_edges = recompute_invalid(&self.tiling);
-                self.supertile_regions = regions;
             }
             ui.add_space(6.0);
             let n = self.tiling.tiles.len();
@@ -351,6 +463,30 @@ impl HexApp {
                 );
             }
             ui.label(format!("{n} tile{}", if n == 1 { "" } else { "s" }));
+
+            ui.add_space(8.0);
+            ui.heading("TreeCoords");
+            ui.separator();
+            match &self.tree {
+                Some(tree) => {
+                    let depth = tree.coords.values().next().map_or(0, TreeCoords::depth);
+                    ui.label(format!("{} root, depth {depth}", TILE_NAMES[tree.top as usize]));
+                    if tree.via_transducer {
+                        ui.small("recomputed via transducer");
+                    }
+                    match self.hover_hex.and_then(|h| tree.coords.get(&h)) {
+                        Some(c) => {
+                            ui.monospace(format!("path {}", coords_str(tree.top, c)));
+                        }
+                        None => {
+                            ui.small("hover a tile for its path");
+                        }
+                    }
+                }
+                None => {
+                    ui.small("untracked — place one tile or supertile on an empty canvas");
+                }
+            }
 
             ui.add_space(8.0);
             ui.separator();
@@ -392,6 +528,19 @@ impl HexApp {
                     egui::epaint::TextShape::new(pos, galley, egui::Color32::WHITE);
                 text_shape.angle = angle;
                 painter.add(egui::Shape::Text(text_shape));
+            }
+            if self.zoom > 35.0 {
+                if let Some(tree) = &self.tree {
+                    if let Some(c) = tree.coords.get(&hex) {
+                        painter.text(
+                            sc + egui::vec2(0.0, self.zoom * 0.45),
+                            egui::Align2::CENTER_CENTER,
+                            coords_str(tree.top, c),
+                            egui::FontId::monospace(self.zoom * 0.16),
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                        );
+                    }
+                }
             }
         } else {
             painter.add(egui::Shape::closed_line(
@@ -570,11 +719,15 @@ impl HexApp {
         if response.clicked_by(egui::PointerButton::Primary) {
             if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
+                let was_empty = self.tiling.tiles.is_empty();
                 let patch = self.placement_patch();
                 for (&h, tile) in &patch.tiles {
                     self.tiling.insert(h + hex, tile.clone());
                 }
                 self.invalid_edges = recompute_invalid(&self.tiling);
+                // A patch on an empty canvas roots a fresh hierarchy; any
+                // other placement is free-form and orphans the coords.
+                self.tree = was_empty.then(|| self.placed_tree_state(hex));
             }
         }
 
@@ -582,7 +735,9 @@ impl HexApp {
         if response.secondary_clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
-                self.tiling.tiles.remove(&hex);
+                if self.tiling.tiles.remove(&hex).is_some() {
+                    self.tree = None;
+                }
                 self.invalid_edges = recompute_invalid(&self.tiling);
             }
         }
@@ -634,6 +789,73 @@ impl eframe::App for HexApp {
                 Self::draw_ghost(&painter, &patch, hover, self.zoom, self.pan, canvas_center);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spectre_tiling::tree_coords::{path_rotation, types_along};
+
+    /// Every tile has coords whose leaf type matches the tile, and whose
+    /// rotation differs from the tile's world rotation by one global constant
+    /// (the patch's rigid rotation).
+    fn assert_coords_match(
+        top: u8,
+        tiling: &MarkedTiling<Label>,
+        coords: &HashMap<Hex, TreeCoords>,
+    ) {
+        assert_eq!(coords.len(), tiling.tiles.len());
+        let mut global_rot = None;
+        for (hex, c) in coords {
+            let (ti, rho) = tile_id(&tiling.tiles[hex]).unwrap();
+            assert_eq!(
+                *types_along(top, &c.path).last().unwrap() as usize,
+                ti,
+                "leaf type mismatch at {hex:?}",
+            );
+            let g = (rho + 6 - path_rotation(top, &c.path) as usize) % 6;
+            assert_eq!(
+                *global_rot.get_or_insert(g),
+                g,
+                "inconsistent global rotation at {hex:?}",
+            );
+        }
+    }
+
+    /// The app flow: place a rotated supertile on an empty canvas, then
+    /// Supersubstitute twice, each time re-deriving every tile's TreeCoords
+    /// from a single seed via the transducer walk.
+    #[test]
+    fn transducer_walk_tracks_app_supersubstitution() {
+        for top in [0usize, 6] {
+            for rot in [0usize, 2] {
+                let mut app = HexApp {
+                    mode: PlaceMode::Supertile,
+                    brush: Brush { type_idx: top, rotation: rot },
+                    ..Default::default()
+                };
+                let at = Hex::new(3, -2);
+                let patch = app.placement_patch();
+                for (&h, tile) in &patch.tiles {
+                    app.tiling.insert(h + at, tile.clone());
+                }
+                let mut tree = app.placed_tree_state(at);
+                let mut tiling = app.tiling;
+                assert_coords_match(tree.top, &tiling, &tree.coords);
+
+                for _ in 0..2 {
+                    let (next, placements) = supersubstitute_with_placements(&tiling);
+                    let (&src, pl) = placements.iter().next().unwrap();
+                    let mut seed = tree.coords[&src].clone();
+                    seed.push(0);
+                    tree.coords = transducer_coords(tree.top, pl.offset, seed, &next)
+                        .expect("transducer walk failed to cover the patch");
+                    tiling = next;
+                    assert_coords_match(tree.top, &tiling, &tree.coords);
+                }
+            }
+        }
     }
 }
 
