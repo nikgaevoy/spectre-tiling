@@ -245,6 +245,10 @@ struct HexApp {
     // Hex sets for each supertile produced by the last Supersubstitute.
     supertile_regions: Vec<HashSet<Hex>>,
     tree: Option<TreeState>,
+    show_borders: bool,
+    show_names: bool,
+    show_edge_labels: bool,
+    show_paths: bool,
 }
 
 impl Default for HexApp {
@@ -262,6 +266,10 @@ impl Default for HexApp {
             zoom: 50.0,
             supertile_regions: Vec::new(),
             tree: None,
+            show_borders: true,
+            show_names: true,
+            show_edge_labels: false,
+            show_paths: true,
         }
     }
 }
@@ -465,6 +473,14 @@ impl HexApp {
             ui.label(format!("{n} tile{}", if n == 1 { "" } else { "s" }));
 
             ui.add_space(8.0);
+            ui.heading("View");
+            ui.separator();
+            ui.checkbox(&mut self.show_names, "Tile names");
+            ui.checkbox(&mut self.show_paths, "Tree paths");
+            ui.checkbox(&mut self.show_edge_labels, "Edge labels");
+            ui.checkbox(&mut self.show_borders, "Supertile borders");
+
+            ui.add_space(8.0);
             ui.heading("TreeCoords");
             ui.separator();
             match &self.tree {
@@ -507,7 +523,7 @@ impl HexApp {
                 TILE_COLORS[type_idx],
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
             ));
-            if self.zoom > 25.0 {
+            if self.show_names && self.zoom > 25.0 {
                 let galley = painter.layout_no_wrap(
                     TILE_NAMES[type_idx].to_string(),
                     egui::FontId::proportional(self.zoom * 0.32),
@@ -529,7 +545,7 @@ impl HexApp {
                 text_shape.angle = angle;
                 painter.add(egui::Shape::Text(text_shape));
             }
-            if self.zoom > 35.0 {
+            if self.show_paths && self.zoom > 35.0 {
                 if let Some(tree) = &self.tree {
                     if let Some(c) = tree.coords.get(&hex) {
                         painter.text(
@@ -589,6 +605,48 @@ impl HexApp {
                 egui::FontId::proportional(font_size),
                 egui::Color32::from_rgb(20, 20, 20),
             );
+        }
+    }
+
+    // Supertile borders of every order, found by the transducer: the order
+    // of the boundary crossed by a move is the number of levels its carry
+    // stays unresolved (`Transducer::border_order`; 0 = plain tile border
+    // between siblings, already drawn by the tiles; full depth = the outer
+    // rim of the patch).  Thickness grows with the square root of the order;
+    // higher orders are drawn last so they paint over lower ones.
+    fn draw_tree_borders(
+        &self,
+        tree: &TreeState,
+        painter: &egui::Painter,
+        hexes: &[Hex],
+        canvas_center: egui::Pos2,
+    ) {
+        let t = Transducer::global();
+        let mut segments: Vec<(usize, [egui::Pos2; 2])> = Vec::new();
+        for &hex in hexes {
+            let Some(c) = tree.coords.get(&hex) else { continue };
+            let Some((_, rho)) = self.tiling.tiles.get(&hex).and_then(tile_id) else {
+                continue;
+            };
+            let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
+            for (w, &dir) in DIRECTIONS.iter().enumerate() {
+                // Each interior edge once (from its E/NE/NW side); rim edges
+                // are always drawn from the tile side.
+                if w >= 3 && tree.coords.contains_key(&(hex + dir)) {
+                    continue;
+                }
+                let delta = ((w + 6 - rho) % 6) as u8;
+                let order = t.border_order(tree.top, c, delta);
+                if order > 0 {
+                    segments.push((order, edge_endpoints(sc, self.zoom, w)));
+                }
+            }
+        }
+        segments.sort_unstable_by_key(|&(order, _)| order);
+        for (order, seg) in segments {
+            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt())
+                .min(self.zoom * 0.4);
+            painter.line_segment(seg, egui::Stroke::new(width, egui::Color32::WHITE));
         }
     }
 
@@ -763,7 +821,7 @@ impl eframe::App for HexApp {
                 self.draw_hex(&painter, hex, sc);
             }
 
-            if self.zoom > 35.0 {
+            if self.show_edge_labels && self.zoom > 35.0 {
                 for &hex in &hexes {
                     if let Some(tile) = self.tiling.tiles.get(&hex).cloned() {
                         let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
@@ -772,9 +830,14 @@ impl eframe::App for HexApp {
                 }
             }
 
-            // Supertile outlines from the last Supersubstitute
-            if !self.supertile_regions.is_empty() {
-                self.draw_supertile_outlines(&painter, rect, canvas_center);
+            // Supertile borders: order-by-thickness from TreeCoords when
+            // tracked, else the flat outlines of the last Supersubstitute.
+            if self.show_borders {
+                if let Some(tree) = &self.tree {
+                    self.draw_tree_borders(tree, &painter, &hexes, canvas_center);
+                } else if !self.supertile_regions.is_empty() {
+                    self.draw_supertile_outlines(&painter, rect, canvas_center);
+                }
             }
 
             // Invalid edges drawn last so red bad edges paint over supertile outlines.

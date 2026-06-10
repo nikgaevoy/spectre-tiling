@@ -259,6 +259,28 @@ impl Transducer {
         out.reverse();
         Some((TreeCoords { path: out }, back.expect("resolved without back edge")))
     }
+
+    /// Order of the supertile boundary crossed when leaving the tile at
+    /// `coords` through edge `edge`: the number of levels the carry stays
+    /// unresolved.  0 means a plain tile border (the neighbor is a sibling
+    /// within the same level-1 supertile); `k` means the edge lies on the
+    /// boundary of an order-`k` supertile but not an order-`k+1` one;
+    /// `coords.depth()` means the move runs off the top of the context
+    /// (the patch's outer rim).
+    pub fn border_order(&self, top: u8, coords: &TreeCoords, edge: u8) -> usize {
+        let types = types_along(top, &coords.path);
+        let mut state = self.start[edge as usize];
+        for (consumed, l) in (0..coords.path.len()).rev().enumerate() {
+            let Some(step) = self.steps[state].get(&(types[l], coords.path[l])) else {
+                break; // inconsistent path: treat as never resolving
+            };
+            if step.back.is_some() {
+                return consumed;
+            }
+            state = step.next;
+        }
+        coords.path.len()
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +326,44 @@ mod tests {
     fn state_count_is_stable() {
         let n = Transducer::global().state_count();
         assert_eq!(n, 279, "transducer state count drifted");
+    }
+
+    /// `border_order` must equal the divergence point of the two paths: with
+    /// a neighbor, depth minus the common prefix length minus 1; without one
+    /// (the move leaves the patch), the full depth.
+    #[test]
+    fn border_order_matches_path_divergence() {
+        let t = Transducer::global();
+        for top in 0..9 {
+            let (_, paths) = canonical_patch_paths(top, 3);
+            for coords in paths.values() {
+                for edge in 0..6 {
+                    let order = t.border_order(top, coords, edge);
+                    match t.neighbor(top, coords, edge) {
+                        Some((nb, _)) => {
+                            let common = coords
+                                .path
+                                .iter()
+                                .zip(&nb.path)
+                                .take_while(|(a, b)| a == b)
+                                .count();
+                            assert_eq!(
+                                order,
+                                coords.path.len() - common - 1,
+                                "top {top}: {:?} edge {edge}",
+                                coords.path,
+                            );
+                        }
+                        None => assert_eq!(
+                            order,
+                            coords.path.len(),
+                            "top {top}: {:?} edge {edge}",
+                            coords.path,
+                        ),
+                    }
+                }
+            }
+        }
     }
 
     /// Deterministic LCG so the test reproduces without dependencies.
