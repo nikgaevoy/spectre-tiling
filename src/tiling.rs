@@ -221,21 +221,33 @@ fn rotate_vertex_step((x, y): (i32, i32)) -> (i32, i32) {
 /// pointy-top hex layout with √3 dropped from x and both axes doubled, so the
 /// hex grid sits on Z².  A hex translation by (ox, oy) shifts these coords by
 /// (2·ox + oy, -3·oy).
-fn anchor_vertex(ap: AnchorPoint) -> (i32, i32) {
+pub(crate) fn anchor_vertex(ap: AnchorPoint) -> (i32, i32) {
     const DX: [i32; 6] = [1, 0, -1, -1, 0, 1];
     const DY: [i32; 6] = [1, 2, 1, -1, -2, -1];
     let c = ap.corner as usize;
     (2 * ap.hex.q + ap.hex.r + DX[c], -3 * ap.hex.r + DY[c])
 }
 
+/// Placement of one expanded supertile in the substitution output:
+/// `BASE_SUPERTILE_FNS[type_idx]().rotate(rotation)` translated by `offset`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placement {
+    pub type_idx: usize,
+    pub rotation: usize,
+    pub offset: Hex,
+}
+
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
 /// together via BFS starting at `start`.  The supertile for the tile at
 /// `start` is anchored at world offset `(0,0)`; every other supertile's
 /// position follows from edge constraints via [`infer_supertile_offset`].
-fn supersubstitute_with_regions_from(
+///
+/// Returns the expanded tiling and, keyed by source-tile position, the
+/// [`Placement`] of the supertile that tile expanded into.
+fn supersubstitute_with_placements_from(
     tiling: &MarkedTiling<Label>,
     start: Hex,
-) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
+) -> (MarkedTiling<Label>, HashMap<Hex, Placement>) {
     let id_at = |pos: &Hex| {
         tile_id(&tiling.tiles[pos]).expect("unrecognized tile in supersubstitute")
     };
@@ -272,17 +284,24 @@ fn supersubstitute_with_regions_from(
     }
 
     let mut result = MarkedTiling::new();
-    let mut regions = Vec::new();
-    for (_, (type_idx, rot, offset)) in known {
-        let mut region = HashSet::new();
-        for (local_hex, tile) in BASE_SUPERTILE_FNS[type_idx]().rotate(rot).tiles {
-            let world_hex = local_hex + offset;
-            result.insert(world_hex, tile);
-            region.insert(world_hex);
+    let mut placements = HashMap::new();
+    for (source, (type_idx, rotation, offset)) in known {
+        for (local_hex, tile) in BASE_SUPERTILE_FNS[type_idx]().rotate(rotation).tiles {
+            result.insert(local_hex + offset, tile);
         }
-        regions.push(region);
+        placements.insert(source, Placement { type_idx, rotation, offset });
     }
-    (result, regions)
+    (result, placements)
+}
+
+/// Hex cells covered by `placement` (the rotated, translated supertile patch).
+pub fn placement_cells(placement: &Placement) -> HashSet<Hex> {
+    BASE_SUPERTILE_FNS[placement.type_idx]()
+        .rotate(placement.rotation)
+        .tiles
+        .keys()
+        .map(|&h| h + placement.offset)
+        .collect()
 }
 
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
@@ -299,7 +318,9 @@ pub fn supersubstitute_with_regions(
     let Some(&start) = tiling.tiles.keys().min_by_key(|h| (h.q, h.r)) else {
         return (MarkedTiling::new(), Vec::new());
     };
-    supersubstitute_with_regions_from(tiling, start)
+    let (result, placements) = supersubstitute_with_placements_from(tiling, start);
+    let regions = placements.values().map(placement_cells).collect();
+    (result, regions)
 }
 
 /// Replace each tile in `tiling` with the corresponding supertile, stitched
@@ -320,11 +341,22 @@ pub fn supersubstitute(tiling: &MarkedTiling<Label>) -> MarkedTiling<Label> {
 pub fn canonical_supersubstitute_with_regions(
     tiling: &MarkedTiling<Label>,
 ) -> (MarkedTiling<Label>, Vec<HashSet<Hex>>) {
+    let (result, placements) = canonical_supersubstitute_with_placements(tiling);
+    let regions = placements.values().map(placement_cells).collect();
+    (result, regions)
+}
+
+/// Canonical substitution returning, for each source-tile position, the
+/// [`Placement`] of the supertile it expanded into.  See
+/// [`canonical_supersubstitute_with_regions`] for the anchoring rules.
+pub fn canonical_supersubstitute_with_placements(
+    tiling: &MarkedTiling<Label>,
+) -> (MarkedTiling<Label>, HashMap<Hex, Placement>) {
     assert!(
         tiling.tiles.contains_key(&Hex::new(0, 0)),
         "canonical_supersubstitute requires a tile at (0,0)",
     );
-    supersubstitute_with_regions_from(tiling, Hex::new(0, 0))
+    supersubstitute_with_placements_from(tiling, Hex::new(0, 0))
 }
 
 /// Canonical [`supersubstitute`]: see [`canonical_supersubstitute_with_regions`].
