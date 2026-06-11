@@ -10,7 +10,7 @@ geometry.
 
 *Spectre mode at context depth 6: supertile borders colored and thickened by
 order, the fractal patch rim at the top right, and the darker tiles marking
-the odd-orientation halves of Γ's mystic pairs.*
+the 30°-rotated second halves of Γ's mystic pairs.*
 
 ## The explorer
 
@@ -31,8 +31,9 @@ An egui app with three modes:
 - **Spectre** (default) — the same generated tiling realized as actual
   14-sided spectre tiles, placed by gluing in exact ℤ[exp(iπ/6)] arithmetic.
   Each hexagon carries one spectre, except Γ which carries the two-tile
-  "mystic" pair (the second one drawn darker — the rare odd-orientation
-  spectre).
+  "mystic" pair.  Every tile is the same shape (never reflected), but the
+  second tile of each pair — drawn darker — sits at an odd multiple of 30°
+  where every other spectre sits at an even one.
 - **Hex tiling** — a free-form editor over a stored tiling: place single
   marked tiles or whole supertiles, erase, validate edge labels, and apply
   the substitution to everything at once.
