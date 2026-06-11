@@ -29,17 +29,85 @@ const TILE_COLORS: [egui::Color32; 9] = [
     egui::Color32::from_rgb(0x78, 0x98, 0x48), // Ψ
 ];
 
-// Supertile border palette by order, 1-based; deeper orders clamp to the
-// last entry.  Order 1 is white, matching the plain (un-coded) border color.
-const ORDER_COLORS: [egui::Color32; 7] = [
+// Border palettes by order, 1-based; deeper orders clamp to the last entry.
+// All are sequential ramps so adjacent orders read as a hierarchy.
+const PALETTE_HEAT: [egui::Color32; 7] = [
     egui::Color32::WHITE,
-    egui::Color32::from_rgb(0xff, 0xd9, 0x4d), // 2 yellow
-    egui::Color32::from_rgb(0xff, 0x99, 0x26), // 3 orange
-    egui::Color32::from_rgb(0xf2, 0x3d, 0x3d), // 4 red
-    egui::Color32::from_rgb(0xd9, 0x4d, 0xff), // 5 magenta
-    egui::Color32::from_rgb(0x4d, 0x86, 0xff), // 6 blue
-    egui::Color32::from_rgb(0x33, 0xe6, 0xe6), // 7+ cyan
+    egui::Color32::from_rgb(0xff, 0xcc, 0x33), // gold
+    egui::Color32::from_rgb(0xff, 0x8c, 0x1a), // orange
+    egui::Color32::from_rgb(0xf2, 0x3d, 0x3d), // red
+    egui::Color32::from_rgb(0xcc, 0x1f, 0x4d), // crimson
+    egui::Color32::from_rgb(0xb3, 0x2d, 0xb5), // magenta
+    egui::Color32::from_rgb(0x77, 0x33, 0xcc), // violet
 ];
+const PALETTE_ICE: [egui::Color32; 7] = [
+    egui::Color32::WHITE,
+    egui::Color32::from_rgb(0xa8, 0xe6, 0xf0), // pale cyan
+    egui::Color32::from_rgb(0x5a, 0xb4, 0xf0), // sky
+    egui::Color32::from_rgb(0x2d, 0x7d, 0xf2), // azure
+    egui::Color32::from_rgb(0x4d, 0x4d, 0xd9), // indigo
+    egui::Color32::from_rgb(0x80, 0x33, 0xcc), // violet
+    egui::Color32::from_rgb(0xb3, 0x33, 0xa6), // plum
+];
+const PALETTE_VIRIDIS: [egui::Color32; 7] = [
+    egui::Color32::from_rgb(0xfd, 0xe7, 0x25), // yellow
+    egui::Color32::from_rgb(0x90, 0xd7, 0x43), // lime
+    egui::Color32::from_rgb(0x35, 0xb7, 0x79), // green
+    egui::Color32::from_rgb(0x21, 0x91, 0x8c), // teal
+    egui::Color32::from_rgb(0x31, 0x68, 0x8e), // steel blue
+    egui::Color32::from_rgb(0x44, 0x39, 0x83), // indigo
+    egui::Color32::from_rgb(0x44, 0x01, 0x54), // deep purple
+];
+const PALETTE_GOLD: [egui::Color32; 7] = [
+    egui::Color32::WHITE,
+    egui::Color32::from_rgb(0xff, 0xe9, 0xb3), // cream
+    egui::Color32::from_rgb(0xff, 0xd2, 0x4d), // gold
+    egui::Color32::from_rgb(0xe6, 0xa3, 0x23), // amber
+    egui::Color32::from_rgb(0xb3, 0x77, 0x00), // bronze
+    egui::Color32::from_rgb(0x80, 0x55, 0x00), // umber
+    egui::Color32::from_rgb(0x4d, 0x33, 0x00), // dark umber
+];
+
+// Color scheme for the order-coded supertile borders.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum BorderPalette {
+    // No coding: uniform white over colored tiles, dark over plain ones.
+    Plain,
+    Heat,
+    Ice,
+    Viridis,
+    Gold,
+}
+
+impl BorderPalette {
+    const ALL: [BorderPalette; 5] = [
+        BorderPalette::Plain,
+        BorderPalette::Heat,
+        BorderPalette::Ice,
+        BorderPalette::Viridis,
+        BorderPalette::Gold,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            BorderPalette::Plain => "Plain",
+            BorderPalette::Heat => "Heat",
+            BorderPalette::Ice => "Ice",
+            BorderPalette::Viridis => "Viridis",
+            BorderPalette::Gold => "Gold fade",
+        }
+    }
+
+    fn colors(self) -> Option<&'static [egui::Color32; 7]> {
+        match self {
+            BorderPalette::Plain => None,
+            BorderPalette::Heat => Some(&PALETTE_HEAT),
+            BorderPalette::Ice => Some(&PALETTE_ICE),
+            BorderPalette::Viridis => Some(&PALETTE_VIRIDIS),
+            BorderPalette::Gold => Some(&PALETTE_GOLD),
+        }
+    }
+}
 
 // Supertile constructors in the same order as TILE_NAMES / BASE_TILES.
 const BASE_SUPERTILE_FNS: [fn() -> MarkedTiling<Label>; 9] = [
@@ -245,7 +313,7 @@ fn coords_str(top: u8, c: &TreeCoords) -> String {
     s
 }
 
-// One generated tile in Tree mode, derived by the transducer.
+// One generated tile in the generated modes, derived by the transducer.
 #[derive(Clone)]
 struct TreeTile {
     coords: TreeCoords,
@@ -277,17 +345,18 @@ fn label_str(label: Label) -> &'static str {
 
 #[derive(PartialEq, Clone, Copy)]
 enum Mode {
-    // Generated mode: no stored tiling — the picture is derived on the fly
-    // by the transducer from the TreeCoords of the tile pinned at hex (0,0).
-    Tree,
+    // Generated mode showing the marked-hexagon metatiles: no stored
+    // tiling — the picture is derived on the fly by the transducer from the
+    // TreeCoords of the tile pinned at hex (0,0).
+    MarkedHex,
     // The same generated tiling, rendered as actual spectre tiles (one per
     // hexagon, two for Γ) placed by BFS gluing in the spectre plane.
     Spectre,
-    // Free-form editor over a stored tiling.
-    Tiling,
+    // Free-form editor over a stored hex tiling.
+    HexTiling,
 }
 
-// What a click places in Tiling mode.
+// What a click places in Hex-tiling mode.
 #[derive(PartialEq, Clone, Copy)]
 enum PlaceMode {
     Single,
@@ -311,7 +380,7 @@ struct ExplorerApp {
     // Hex sets for each supertile produced by the last Supersubstitute.
     supertile_regions: Vec<HashSet<Hex>>,
     tracked: Option<TreeState>,
-    // Tree-mode state: the only ground truth is `tree_top`/`tree_path` — the
+    // Generated-modes state (Marked hex & Spectre): the only ground truth is `tree_top`/`tree_path` — the
     // TreeCoords of the tile pinned at hex (0,0) with world rotation 0.  The
     // cache memoizes transducer-derived tiles (None = no tile there) and is
     // updated in place, not recomputed, when the context grows or shrinks.
@@ -332,7 +401,7 @@ struct ExplorerApp {
     show_edge_labels: bool,
     show_paths: bool,
     show_colors: bool,
-    color_borders: bool,
+    border_palette: BorderPalette,
 }
 
 impl Default for ExplorerApp {
@@ -344,7 +413,7 @@ impl Default for ExplorerApp {
                 type_idx: 0,
                 rotation: 0,
             },
-            mode: Mode::Tree,
+            mode: Mode::Spectre,
             place_mode: PlaceMode::Single,
             hover_hex: None,
             pan: egui::Vec2::ZERO,
@@ -361,7 +430,7 @@ impl Default for ExplorerApp {
             show_edge_labels: false,
             show_paths: true,
             show_colors: true,
-            color_borders: false,
+            border_palette: BorderPalette::Plain,
         }
     }
 }
@@ -410,7 +479,7 @@ impl ExplorerApp {
         }
     }
 
-    // ---- Tree mode: the tiling generated from the (0,0) tile's TreeCoords ----
+    // ---- Generated modes: the tiling generated from the (0,0) tile's TreeCoords ----
 
     // Place the root tile on an empty canvas: full path of one letter, the
     // tile itself pinned at (0,0).
@@ -738,7 +807,7 @@ impl ExplorerApp {
         }
     }
 
-    // Tree-mode side-panel section: the context of the pinned (0,0) tile and
+    // Generated-modes side-panel section: the context of the pinned (0,0) tile and
     // the buttons that grow or shrink it.
     fn context_controls(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
@@ -812,7 +881,7 @@ impl ExplorerApp {
         }
     }
 
-    // Tiling-mode side-panel sections: place submode, brush, rotation,
+    // Hex-tiling-mode side-panel sections: place submode, brush, rotation,
     // preview, and the edit actions on the stored tiling.
     fn brush_controls(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
@@ -974,9 +1043,9 @@ impl ExplorerApp {
             ui.heading("Mode");
             ui.separator();
             for &(label, mode) in &[
-                ("Tree", Mode::Tree),
+                ("Marked hex", Mode::MarkedHex),
                 ("Spectre", Mode::Spectre),
-                ("Tiling", Mode::Tiling),
+                ("Hex tiling", Mode::HexTiling),
             ] {
                 let selected = self.mode == mode;
                 let fill = if selected {
@@ -996,7 +1065,7 @@ impl ExplorerApp {
                 }
             }
 
-            if self.mode == Mode::Tiling {
+            if self.mode == Mode::HexTiling {
                 self.brush_controls(ui);
             } else {
                 self.context_controls(ui);
@@ -1010,15 +1079,24 @@ impl ExplorerApp {
             ui.checkbox(&mut self.show_paths, "Tree paths");
             ui.checkbox(&mut self.show_edge_labels, "Edge labels");
             ui.checkbox(&mut self.show_borders, "Supertile borders");
-            ui.checkbox(&mut self.color_borders, "Color-coded borders");
+            ui.horizontal(|ui| {
+                ui.label("Palette:");
+                egui::ComboBox::from_id_salt("border-palette")
+                    .selected_text(self.border_palette.name())
+                    .show_ui(ui, |ui| {
+                        for p in BorderPalette::ALL {
+                            ui.selectable_value(&mut self.border_palette, p, p.name());
+                        }
+                    });
+            });
             ui.add_space(4.0);
             if ui.button("Center (0,0)").clicked() {
                 self.pan = egui::Vec2::ZERO;
             }
 
-            if self.mode == Mode::Tree {
+            if self.mode == Mode::MarkedHex {
                 ui.add_space(8.0);
-                ui.heading("TreeCoords");
+                ui.heading("Tree Coordinates");
                 ui.separator();
                 let hovered = self
                     .hover_hex
@@ -1034,7 +1112,7 @@ impl ExplorerApp {
                 }
             } else if self.mode == Mode::Spectre {
                 ui.add_space(8.0);
-                ui.heading("TreeCoords");
+                ui.heading("Tree Coordinates");
                 ui.separator();
                 let hovered = self.hover_spectre.and_then(|(hex, idx)| {
                     self.tree_cache
@@ -1055,9 +1133,9 @@ impl ExplorerApp {
                         ui.monospace("hover a tile");
                     }
                 }
-            } else if self.mode == Mode::Tiling {
+            } else if self.mode == Mode::HexTiling {
                 ui.add_space(8.0);
-                ui.heading("TreeCoords");
+                ui.heading("Tree Coordinates");
                 ui.separator();
                 match &self.tracked {
                     Some(tr) => {
@@ -1083,7 +1161,7 @@ impl ExplorerApp {
 
             ui.add_space(8.0);
             ui.separator();
-            if self.mode == Mode::Tiling {
+            if self.mode == Mode::HexTiling {
                 ui.monospace("Left-click: place");
                 ui.monospace("Right-click: erase");
                 ui.monospace("Drag: pan");
@@ -1125,15 +1203,12 @@ impl ExplorerApp {
         }
     }
 
-    // Supertile border color: the order palette when color-coding is on;
-    // otherwise white over colored tiles, dark over plain ones.
+    // Supertile border color for one order, per the selected palette.
     fn order_color(&self, order: usize) -> egui::Color32 {
-        if self.color_borders {
-            ORDER_COLORS[(order - 1).min(ORDER_COLORS.len() - 1)]
-        } else if self.show_colors {
-            egui::Color32::WHITE
-        } else {
-            egui::Color32::from_rgb(25, 25, 25)
+        match self.border_palette.colors() {
+            Some(palette) => palette[(order - 1).min(palette.len() - 1)],
+            None if self.show_colors => egui::Color32::WHITE,
+            None => egui::Color32::from_rgb(25, 25, 25),
         }
     }
 
@@ -1412,9 +1487,9 @@ impl ExplorerApp {
             }
         }
 
-        // Tree and Spectre modes are read-only: the tiling is generated,
+        // Marked-hex and Spectre modes are read-only: the tiling is generated,
         // not edited.
-        if self.mode != Mode::Tiling {
+        if self.mode != Mode::HexTiling {
             return;
         }
 
@@ -1461,7 +1536,7 @@ impl eframe::App for ExplorerApp {
 
             let hexes = visible_hexes(rect, self.zoom, self.pan);
 
-            if self.mode == Mode::Tree {
+            if self.mode == Mode::MarkedHex {
                 self.tree_fill(rect, canvas_center);
 
                 for &hex in &hexes {
@@ -1619,7 +1694,7 @@ mod tests {
         for top in [0usize, 6] {
             for rot in [0usize, 2] {
                 let mut app = ExplorerApp {
-                    mode: Mode::Tiling,
+                    mode: Mode::HexTiling,
                     place_mode: PlaceMode::Supertile,
                     brush: Brush { type_idx: top, rotation: rot },
                     ..Default::default()
@@ -1647,7 +1722,7 @@ mod tests {
         }
     }
 
-    /// Tree mode: growing the context around the pinned (0,0) tile generates
+    /// Marked-hex mode: growing the context around the pinned (0,0) tile generates
     /// exactly the corresponding supertile patches (the pinned embedding
     /// coincides with the canonical one at level 1), the depth-2 patch glues
     /// validly everywhere, and shrinking restores the previous states.
