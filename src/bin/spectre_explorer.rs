@@ -289,7 +289,7 @@ struct Brush {
     rotation: usize,
 }
 
-struct HexApp {
+struct ExplorerApp {
     tiling: MarkedTiling<Label>,
     invalid_edges: HashSet<(Hex, usize)>,
     brush: Brush,
@@ -321,7 +321,7 @@ struct HexApp {
     show_paths: bool,
 }
 
-impl Default for HexApp {
+impl Default for ExplorerApp {
     fn default() -> Self {
         Self {
             tiling: MarkedTiling::new(),
@@ -350,7 +350,7 @@ impl Default for HexApp {
     }
 }
 
-impl HexApp {
+impl ExplorerApp {
     // Returns the patch to place (at origin), respecting current submode and brush.
     fn placement_patch(&self) -> MarkedTiling<Label> {
         match self.place_mode {
@@ -1361,7 +1361,7 @@ impl HexApp {
     }
 }
 
-impl eframe::App for HexApp {
+impl eframe::App for ExplorerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.side_panel(ctx);
 
@@ -1489,14 +1489,14 @@ impl eframe::App for HexApp {
 
 fn main() -> eframe::Result<()> {
     eframe::run_native(
-        "Spectre Hex Tile Editor",
+        "Spectre Explorer",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([1280.0, 800.0])
-                .with_title("Spectre Hex Tile Editor"),
+                .with_title("Spectre Explorer"),
             ..Default::default()
         },
-        Box::new(|_cc| Ok(Box::new(HexApp::default()))),
+        Box::new(|_cc| Ok(Box::new(ExplorerApp::default()))),
     )
 }
 
@@ -1538,7 +1538,7 @@ mod tests {
     fn transducer_walk_tracks_app_supersubstitution() {
         for top in [0usize, 6] {
             for rot in [0usize, 2] {
-                let mut app = HexApp {
+                let mut app = ExplorerApp {
                     mode: Mode::Tiling,
                     place_mode: PlaceMode::Supertile,
                     brush: Brush { type_idx: top, rotation: rot },
@@ -1573,12 +1573,12 @@ mod tests {
     /// validly everywhere, and shrinking restores the previous states.
     #[test]
     fn tree_mode_generates_patches() {
-        let mut app = HexApp {
+        let mut app = ExplorerApp {
             zoom: 20.0,
             ..Default::default()
         };
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 800.0));
-        let some_count = |app: &HexApp| {
+        let some_count = |app: &ExplorerApp| {
             app.tree_cache.values().filter(|e| e.is_some()).count()
         };
 
@@ -1622,7 +1622,7 @@ mod tests {
     /// one extra per Γ, all glued from the pinned seed.
     #[test]
     fn spectre_mode_generates_patch() {
-        let mut app = HexApp {
+        let mut app = ExplorerApp {
             zoom: 20.0,
             mode: Mode::Spectre,
             ..Default::default()

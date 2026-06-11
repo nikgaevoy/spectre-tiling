@@ -230,7 +230,7 @@ pub fn boundary_tables() -> &'static BoundaryTables {
 }
 
 /// Hex-edge `(h, d)` endpoints are corners `(6-d)%6` and `(5-d)%6` of `h`
-/// (in `hex_app::corner` numbering); directing every boundary edge this way
+/// (in `spectre_explorer::corner` numbering); directing every boundary edge this way
 /// gives a consistent winding, so each boundary vertex starts exactly one
 /// directed segment and the walk is well defined.
 fn corner_vertex(hex: Hex, corner: usize) -> (i32, i32) {

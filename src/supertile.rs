@@ -4,7 +4,7 @@ use crate::spectre::*;
 
 /// A specific vertex on a supertile border: the `corner`-th vertex (0–5) of `hex`.
 /// Both fields are in the supertile's local coordinate frame (origin = Hex(0,0)).
-/// Corner numbering matches `hex_app::corner()`: angle = 30° + 60°·i, y-down screen space.
+/// Corner numbering matches `spectre_explorer::corner()`: angle = 30° + 60°·i, y-down screen space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnchorPoint {
     pub hex: Hex,

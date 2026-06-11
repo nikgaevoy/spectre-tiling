@@ -7,5 +7,5 @@ edition = "2024"
 eframe = "0.31"
 
 [[bin]]
-name = "hex_app"
-path = "src/bin/hex_app.rs"
+name = "spectre_explorer"
+path = "src/bin/spectre_explorer.rs"
