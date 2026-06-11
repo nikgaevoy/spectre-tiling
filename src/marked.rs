@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Neg;
 
-use crate::hex::{Hex, DIRECTIONS};
+use crate::hex::{DIRECTIONS, Hex};
 
 /// A hexagonal tile whose six edges are each labeled with a value of type `L`.
 ///

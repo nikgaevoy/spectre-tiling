@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 
 use crate::hex::DIRECTIONS;
 use crate::tree_coords::{
-    boundary_tables, child_at, edge_adjacency, types_along, TreeCoords, SUPERTILE_CHILDREN,
+    SUPERTILE_CHILDREN, TreeCoords, boundary_tables, child_at, edge_adjacency, types_along,
 };
 
 /// Input symbol: `(parent supertile type, child index within it)`.
@@ -108,8 +108,15 @@ fn transition(state: &State, sym: Sym) -> Option<(State, Vec<u8>, Option<u8>)> {
             s.push(seg.child);
             residues.insert((n2, e2b), (s, back));
         }
-        assert!(!residues.is_empty(), "no candidate far side for ({p}, {e2})");
-        let mut st = State::Carry { t: p, e: e2, residues };
+        assert!(
+            !residues.is_empty(),
+            "no candidate far side for ({p}, {e2})"
+        );
+        let mut st = State::Carry {
+            t: p,
+            e: e2,
+            residues,
+        };
         let emit = match &mut st {
             State::Carry { residues, .. } => strip_common_prefix(residues),
             _ => unreachable!(),
@@ -133,9 +140,7 @@ fn transition(state: &State, sym: Sym) -> Option<(State, Vec<u8>, Option<u8>)> {
                     let &(e2, k) = bt.seg_lookup[p as usize].get(&(i, d as u8)).unwrap();
                     // The leaf is the only level below: each branch starts
                     // with just the new leaf index and its back edge.
-                    Some(carry_on(e2, k, &|key: &(u8, u8)| {
-                        (Vec::new(), key.1)
-                    }))
+                    Some(carry_on(e2, k, &|key: &(u8, u8)| (Vec::new(), key.1)))
                 }
             }
         }
@@ -205,8 +210,7 @@ impl Transducer {
         let mut ids: HashMap<State, usize> = HashMap::new();
         let mut queue: VecDeque<(usize, State)> = VecDeque::new();
         let copy = intern(State::Copy, &mut ids, &mut queue);
-        let start =
-            std::array::from_fn(|d| intern(State::Start(d as u8), &mut ids, &mut queue));
+        let start = std::array::from_fn(|d| intern(State::Start(d as u8), &mut ids, &mut queue));
 
         let mut steps: HashMap<usize, HashMap<Sym, Step>> = HashMap::new();
         while let Some((id, st)) = queue.pop_front() {
@@ -226,7 +230,11 @@ impl Transducer {
         for (id, row) in steps {
             table[id] = row;
         }
-        Transducer { steps: table, start, copy }
+        Transducer {
+            steps: table,
+            start,
+            copy,
+        }
     }
 
     /// Number of deterministic states (including `Copy` and the 6 starts).
@@ -257,7 +265,10 @@ impl Transducer {
         }
         debug_assert_eq!(out.len(), coords.path.len());
         out.reverse();
-        Some((TreeCoords { path: out }, back.expect("resolved without back edge")))
+        Some((
+            TreeCoords { path: out },
+            back.expect("resolved without back edge"),
+        ))
     }
 
     /// Order of the supertile boundary crossed when leaving the tile at

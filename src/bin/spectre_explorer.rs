@@ -1,21 +1,21 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use eframe::egui;
-use spectre_tiling::hex::{Hex, DIRECTIONS};
+use spectre_tiling::hex::{DIRECTIONS, Hex};
 use spectre_tiling::marked::{MarkedTile, MarkedTiling};
 use spectre_tiling::spectre::Label;
 use spectre_tiling::spectre_geom::{
-    our_direction, spectre_place, spectre_step, Zd, SPECMAP, SPECTRE_TRIANGLES,
+    SPECMAP, SPECTRE_TRIANGLES, Zd, our_direction, spectre_place, spectre_step,
 };
 use spectre_tiling::supertile::{
-    supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi,
-    supertile_psi, supertile_sigma, supertile_theta, supertile_xi,
+    supertile_delta, supertile_gamma, supertile_lambda, supertile_phi, supertile_pi, supertile_psi,
+    supertile_sigma, supertile_theta, supertile_xi,
 };
 use spectre_tiling::tiling::{
-    placement_cells, supersubstitute_with_placements, tile_id, BASE_TILES, TILE_NAMES,
+    BASE_TILES, TILE_NAMES, placement_cells, supersubstitute_with_placements, tile_id,
 };
 use spectre_tiling::transducer::Transducer;
-use spectre_tiling::tree_coords::{types_along, TreeCoords, SUPERTILE_CHILDREN};
+use spectre_tiling::tree_coords::{SUPERTILE_CHILDREN, TreeCoords, types_along};
 
 const TILE_COLORS: [egui::Color32; 9] = [
     egui::Color32::from_rgb(0xc8, 0x78, 0x28), // Γ
@@ -150,7 +150,10 @@ fn hex_corners(sc: egui::Pos2, zoom: f32) -> Vec<egui::Pos2> {
 // Edge i (facing DIRECTIONS[i]) spans corners (11-i)%6 and (6-i)%6.
 // Verified: E→corners 5,0; NE→4,5; NW→3,4; W→2,3; SW→1,2; SE→0,1.
 fn edge_endpoints(sc: egui::Pos2, zoom: f32, i: usize) -> [egui::Pos2; 2] {
-    [corner(sc, zoom, (11 - i) % 6), corner(sc, zoom, (6 - i) % 6)]
+    [
+        corner(sc, zoom, (11 - i) % 6),
+        corner(sc, zoom, (6 - i) % 6),
+    ]
 }
 
 fn hex_to_screen(hex: Hex, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> egui::Pos2 {
@@ -173,9 +176,7 @@ fn point_in_polygon(p: egui::Pos2, pts: &[egui::Pos2]) -> bool {
     let mut j = pts.len() - 1;
     for i in 0..pts.len() {
         let (a, b) = (pts[i], pts[j]);
-        if (a.y > p.y) != (b.y > p.y)
-            && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x
-        {
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
             inside = !inside;
         }
         j = i;
@@ -447,9 +448,10 @@ impl ExplorerApp {
                 );
                 t
             }
-            PlaceMode::Supertile => {
-                rotate_tiling(&BASE_SUPERTILE_FNS[self.brush.type_idx](), self.brush.rotation)
-            }
+            PlaceMode::Supertile => rotate_tiling(
+                &BASE_SUPERTILE_FNS[self.brush.type_idx](),
+                self.brush.rotation,
+            ),
         }
     }
 
@@ -468,7 +470,12 @@ impl ExplorerApp {
                     for _ in 0..self.brush.rotation {
                         h = h.rotate_cw();
                     }
-                    coords.insert(h + at, TreeCoords { path: vec![i as u8] });
+                    coords.insert(
+                        h + at,
+                        TreeCoords {
+                            path: vec![i as u8],
+                        },
+                    );
                 }
             }
         }
@@ -546,7 +553,9 @@ impl ExplorerApp {
             self.tree_cache.insert(
                 seed,
                 Some(TreeTile {
-                    coords: TreeCoords { path: self.tree_path.clone() },
+                    coords: TreeCoords {
+                        path: self.tree_path.clone(),
+                    },
                     type_idx: *types_along(top, &self.tree_path).last().unwrap(),
                     rot: 0,
                 }),
@@ -602,7 +611,9 @@ impl ExplorerApp {
             queue.push_back(seed);
         }
         while let Some(hex) = queue.pop_front() {
-            let Some(Some(tile)) = self.tree_cache.get(&hex).cloned() else { continue };
+            let Some(Some(tile)) = self.tree_cache.get(&hex).cloned() else {
+                continue;
+            };
             for (w, &dir) in DIRECTIONS.iter().enumerate() {
                 let nb = hex + dir;
                 if self.tree_cache.contains_key(&nb)
@@ -611,8 +622,9 @@ impl ExplorerApp {
                     continue;
                 }
                 let delta = ((w + 6 - tile.rot as usize) % 6) as u8;
-                let entry =
-                    t.neighbor(top, &tile.coords, delta).map(|(nc, back)| TreeTile {
+                let entry = t
+                    .neighbor(top, &tile.coords, delta)
+                    .map(|(nc, back)| TreeTile {
                         type_idx: *types_along(top, &nc.path).last().unwrap(),
                         rot: ((w + 9 - back as usize) % 6) as u8,
                         coords: nc,
@@ -657,15 +669,13 @@ impl ExplorerApp {
 
         while let Some((hex, idx)) = queue.pop_front() {
             let poly = self.spectre_cache[&(hex, idx)];
-            let Some(Some(tile)) = tree.get(&hex).cloned() else { continue };
+            let Some(Some(tile)) = tree.get(&hex).cloned() else {
+                continue;
+            };
             for edge in 0..14u8 {
-                let step = spectre_step(
-                    hex,
-                    (tile.type_idx, tile.rot),
-                    idx,
-                    edge,
-                    &mut |f, w| Self::tree_neighbor_tile(&mut tree, top, f, w),
-                );
+                let step = spectre_step(hex, (tile.type_idx, tile.rot), idx, edge, &mut |f, w| {
+                    Self::tree_neighbor_tile(&mut tree, top, f, w)
+                });
                 let Some((h2, i2, e2)) = step else { continue };
                 if self.spectre_cache.contains_key(&(h2, i2)) {
                     continue;
@@ -704,7 +714,9 @@ impl ExplorerApp {
             if !pts.iter().any(|p| cull.contains(*p)) {
                 continue;
             }
-            let Some(Some(tile)) = self.tree_cache.get(&hex) else { continue };
+            let Some(Some(tile)) = self.tree_cache.get(&hex) else {
+                continue;
+            };
             let base = self.tile_fill(tile.type_idx as usize);
             let color = if idx == 1 {
                 // Γ's second spectre: the rare odd-orientation partner.
@@ -801,8 +813,7 @@ impl ExplorerApp {
         }
         border_segs.sort_unstable_by_key(|&(order, _)| order);
         for (order, seg) in border_segs {
-            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt())
-                .min(self.zoom * 0.4);
+            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt()).min(self.zoom * 0.4);
             painter.line_segment(seg, egui::Stroke::new(width, self.order_color(order)));
         }
     }
@@ -816,7 +827,9 @@ impl ExplorerApp {
         match self.tree_top {
             Some(top) => {
                 ui.label(format!("depth {}", self.tree_path.len()));
-                let seed = TreeCoords { path: self.tree_path.clone() };
+                let seed = TreeCoords {
+                    path: self.tree_path.clone(),
+                };
                 ui.monospace(format!("(0,0): {}", coords_str(top, &seed)));
             }
             None => {
@@ -827,10 +840,16 @@ impl ExplorerApp {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let can_shrink = self.tree_top.is_some();
-            if ui.add_enabled(can_shrink, egui::Button::new("Shrink")).clicked() {
+            if ui
+                .add_enabled(can_shrink, egui::Button::new("Shrink"))
+                .clicked()
+            {
                 self.tree_strip();
             }
-            if ui.add_enabled(can_shrink, egui::Button::new("Reset")).clicked() {
+            if ui
+                .add_enabled(can_shrink, egui::Button::new("Reset"))
+                .clicked()
+            {
                 self.tree_reset();
             }
         });
@@ -838,16 +857,14 @@ impl ExplorerApp {
         ui.add_space(6.0);
         let grow_button = |ui: &mut egui::Ui, type_idx: u8, label: String| -> bool {
             let color = TILE_COLORS[type_idx as usize];
-            let btn = egui::Button::new(
-                egui::RichText::new(label).color(color).strong(),
-            )
-            .fill(egui::Color32::from_rgba_unmultiplied(
-                color.r(),
-                color.g(),
-                color.b(),
-                50,
-            ))
-            .min_size(egui::vec2(44.0, 26.0));
+            let btn = egui::Button::new(egui::RichText::new(label).color(color).strong())
+                .fill(egui::Color32::from_rgba_unmultiplied(
+                    color.r(),
+                    color.g(),
+                    color.b(),
+                    50,
+                ))
+                .min_size(egui::vec2(44.0, 26.0));
             ui.add(btn).clicked()
         };
         match self.tree_top {
@@ -920,9 +937,15 @@ impl ExplorerApp {
             } else {
                 egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 50)
             };
-            let text_color = if selected { egui::Color32::WHITE } else { color };
+            let text_color = if selected {
+                egui::Color32::WHITE
+            } else {
+                color
+            };
             let btn = egui::Button::new(
-                egui::RichText::new(TILE_NAMES[i]).color(text_color).strong(),
+                egui::RichText::new(TILE_NAMES[i])
+                    .color(text_color)
+                    .strong(),
             )
             .fill(fill)
             .min_size(egui::vec2(110.0, 26.0));
@@ -976,10 +999,7 @@ impl ExplorerApp {
         for i in 0..6 {
             let [a, b] = edge_endpoints(pc, pz, i);
             let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-            let inset = egui::pos2(
-                mid.x + (pc.x - mid.x) * 0.3,
-                mid.y + (pc.y - mid.y) * 0.3,
-            );
+            let inset = egui::pos2(mid.x + (pc.x - mid.x) * 0.3, mid.y + (pc.y - mid.y) * 0.3);
             preview_painter.text(
                 inset,
                 egui::Align2::CENTER_CENTER,
@@ -1015,7 +1035,11 @@ impl ExplorerApp {
                 let mut seed = tr.coords.get(&src)?.clone();
                 seed.push(0);
                 let coords = transducer_coords(tr.top, pl.offset, seed, &new_tiling)?;
-                Some(TreeState { top: tr.top, coords, via_transducer: true })
+                Some(TreeState {
+                    top: tr.top,
+                    coords,
+                    via_transducer: true,
+                })
             });
             self.supertile_regions = placements.values().map(placement_cells).collect();
             self.tiling = new_tiling;
@@ -1038,140 +1062,147 @@ impl ExplorerApp {
     }
 
     fn side_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("tools").min_width(130.0).show(ctx, |ui| {
-            // Mode toggle
-            ui.heading("Mode");
-            ui.separator();
-            for &(label, mode) in &[
-                ("Marked hex", Mode::MarkedHex),
-                ("Spectre", Mode::Spectre),
-                ("Hex tiling", Mode::HexTiling),
-            ] {
-                let selected = self.mode == mode;
-                let fill = if selected {
-                    egui::Color32::from_rgb(80, 120, 200)
+        egui::SidePanel::left("tools")
+            .min_width(130.0)
+            .show(ctx, |ui| {
+                // Mode toggle
+                ui.heading("Mode");
+                ui.separator();
+                for &(label, mode) in &[
+                    ("Marked hex", Mode::MarkedHex),
+                    ("Spectre", Mode::Spectre),
+                    ("Hex tiling", Mode::HexTiling),
+                ] {
+                    let selected = self.mode == mode;
+                    let fill = if selected {
+                        egui::Color32::from_rgb(80, 120, 200)
+                    } else {
+                        egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(label)
+                                .fill(fill)
+                                .min_size(egui::vec2(110.0, 24.0)),
+                        )
+                        .clicked()
+                    {
+                        self.mode = mode;
+                    }
+                }
+
+                if self.mode == Mode::HexTiling {
+                    self.brush_controls(ui);
                 } else {
-                    egui::Color32::from_rgba_unmultiplied(80, 120, 200, 40)
-                };
-                if ui
-                    .add(
-                        egui::Button::new(label)
-                            .fill(fill)
-                            .min_size(egui::vec2(110.0, 24.0)),
-                    )
-                    .clicked()
-                {
-                    self.mode = mode;
+                    self.context_controls(ui);
                 }
-            }
 
-            if self.mode == Mode::HexTiling {
-                self.brush_controls(ui);
-            } else {
-                self.context_controls(ui);
-            }
-
-            ui.add_space(8.0);
-            ui.heading("View");
-            ui.separator();
-            ui.checkbox(&mut self.show_colors, "Tile colors");
-            ui.checkbox(&mut self.show_names, "Tile names");
-            ui.checkbox(&mut self.show_paths, "Tree paths");
-            ui.checkbox(&mut self.show_edge_labels, "Edge labels");
-            ui.checkbox(&mut self.show_borders, "Supertile borders");
-            ui.horizontal(|ui| {
-                ui.label("Palette:");
-                egui::ComboBox::from_id_salt("border-palette")
-                    .selected_text(self.border_palette.name())
-                    .show_ui(ui, |ui| {
-                        for p in BorderPalette::ALL {
-                            ui.selectable_value(&mut self.border_palette, p, p.name());
-                        }
-                    });
-            });
-            ui.add_space(4.0);
-            if ui.button("Center (0,0)").clicked() {
-                self.pan = egui::Vec2::ZERO;
-            }
-
-            if self.mode == Mode::MarkedHex {
                 ui.add_space(8.0);
-                ui.heading("Tree Coordinates");
+                ui.heading("View");
                 ui.separator();
-                let hovered = self
-                    .hover_hex
-                    .and_then(|h| self.tree_cache.get(&h))
-                    .and_then(Option::as_ref);
-                match self.tree_top.zip(hovered) {
-                    Some((top, tile)) => {
-                        ui.monospace(coords_str(top, &tile.coords));
-                    }
-                    None => {
-                        ui.monospace("hover a tile");
-                    }
-                }
-            } else if self.mode == Mode::Spectre {
-                ui.add_space(8.0);
-                ui.heading("Tree Coordinates");
-                ui.separator();
-                let hovered = self.hover_spectre.and_then(|(hex, idx)| {
-                    self.tree_cache
-                        .get(&hex)
-                        .and_then(Option::as_ref)
-                        .map(|tile| (tile, idx))
+                ui.checkbox(&mut self.show_colors, "Tile colors");
+                ui.checkbox(&mut self.show_names, "Tile names");
+                ui.checkbox(&mut self.show_paths, "Tree paths");
+                ui.checkbox(&mut self.show_edge_labels, "Edge labels");
+                ui.checkbox(&mut self.show_borders, "Supertile borders");
+                ui.horizontal(|ui| {
+                    ui.label("Palette:");
+                    egui::ComboBox::from_id_salt("border-palette")
+                        .selected_text(self.border_palette.name())
+                        .show_ui(ui, |ui| {
+                            for p in BorderPalette::ALL {
+                                ui.selectable_value(&mut self.border_palette, p, p.name());
+                            }
+                        });
                 });
-                match self.tree_top.zip(hovered) {
-                    Some((top, (tile, idx))) => {
-                        let mut s = coords_str(top, &tile.coords);
-                        if tile.type_idx == 0 {
-                            // Which of Γ's pair, as a subscript on the leaf step.
-                            s.push(if idx == 0 { '₀' } else { '₁' });
-                        }
-                        ui.monospace(s);
-                    }
-                    None => {
-                        ui.monospace("hover a tile");
-                    }
+                ui.add_space(4.0);
+                if ui.button("Center (0,0)").clicked() {
+                    self.pan = egui::Vec2::ZERO;
                 }
-            } else if self.mode == Mode::HexTiling {
-                ui.add_space(8.0);
-                ui.heading("Tree Coordinates");
-                ui.separator();
-                match &self.tracked {
-                    Some(tr) => {
-                        let depth = tr.coords.values().next().map_or(0, TreeCoords::depth);
-                        ui.label(format!("{} root, depth {depth}", TILE_NAMES[tr.top as usize]));
-                        if tr.via_transducer {
-                            ui.monospace("recomputed via transducer");
-                        }
-                        match self.hover_hex.and_then(|h| tr.coords.get(&h)) {
-                            Some(c) => {
-                                ui.monospace(coords_str(tr.top, c));
-                            }
-                            None => {
-                                ui.monospace("hover a tile");
-                            }
-                        }
-                    }
-                    None => {
-                        ui.monospace("untracked — place one tile or supertile on an empty canvas");
-                    }
-                }
-            }
 
-            ui.add_space(8.0);
-            ui.separator();
-            if self.mode == Mode::HexTiling {
-                ui.monospace("Left-click: place");
-                ui.monospace("Right-click: erase");
-                ui.monospace("Drag: pan");
-                ui.monospace("Scroll: zoom");
-                ui.monospace("Q / E: rotate CCW / CW");
-            } else {
-                ui.monospace("Drag: pan");
-                ui.monospace("Scroll: zoom");
-            }
-        });
+                if self.mode == Mode::MarkedHex {
+                    ui.add_space(8.0);
+                    ui.heading("Tree Coordinates");
+                    ui.separator();
+                    let hovered = self
+                        .hover_hex
+                        .and_then(|h| self.tree_cache.get(&h))
+                        .and_then(Option::as_ref);
+                    match self.tree_top.zip(hovered) {
+                        Some((top, tile)) => {
+                            ui.monospace(coords_str(top, &tile.coords));
+                        }
+                        None => {
+                            ui.monospace("hover a tile");
+                        }
+                    }
+                } else if self.mode == Mode::Spectre {
+                    ui.add_space(8.0);
+                    ui.heading("Tree Coordinates");
+                    ui.separator();
+                    let hovered = self.hover_spectre.and_then(|(hex, idx)| {
+                        self.tree_cache
+                            .get(&hex)
+                            .and_then(Option::as_ref)
+                            .map(|tile| (tile, idx))
+                    });
+                    match self.tree_top.zip(hovered) {
+                        Some((top, (tile, idx))) => {
+                            let mut s = coords_str(top, &tile.coords);
+                            if tile.type_idx == 0 {
+                                // Which of Γ's pair, as a subscript on the leaf step.
+                                s.push(if idx == 0 { '₀' } else { '₁' });
+                            }
+                            ui.monospace(s);
+                        }
+                        None => {
+                            ui.monospace("hover a tile");
+                        }
+                    }
+                } else if self.mode == Mode::HexTiling {
+                    ui.add_space(8.0);
+                    ui.heading("Tree Coordinates");
+                    ui.separator();
+                    match &self.tracked {
+                        Some(tr) => {
+                            let depth = tr.coords.values().next().map_or(0, TreeCoords::depth);
+                            ui.label(format!(
+                                "{} root, depth {depth}",
+                                TILE_NAMES[tr.top as usize]
+                            ));
+                            if tr.via_transducer {
+                                ui.monospace("recomputed via transducer");
+                            }
+                            match self.hover_hex.and_then(|h| tr.coords.get(&h)) {
+                                Some(c) => {
+                                    ui.monospace(coords_str(tr.top, c));
+                                }
+                                None => {
+                                    ui.monospace("hover a tile");
+                                }
+                            }
+                        }
+                        None => {
+                            ui.monospace(
+                                "untracked — place one tile or supertile on an empty canvas",
+                            );
+                        }
+                    }
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                if self.mode == Mode::HexTiling {
+                    ui.monospace("Left-click: place");
+                    ui.monospace("Right-click: erase");
+                    ui.monospace("Drag: pan");
+                    ui.monospace("Scroll: zoom");
+                    ui.monospace("Q / E: rotate CCW / CW");
+                } else {
+                    ui.monospace("Drag: pan");
+                    ui.monospace("Scroll: zoom");
+                }
+            });
     }
 
     // Fill + name + optional path label for a tile of `type_idx` rotated by
@@ -1242,8 +1273,7 @@ impl ExplorerApp {
                 sc.x - (sz.x / 2.0 * cos_a - sz.y / 2.0 * sin_a),
                 sc.y - (sz.x / 2.0 * sin_a + sz.y / 2.0 * cos_a),
             );
-            let mut text_shape =
-                egui::epaint::TextShape::new(pos, galley, self.tile_text_color());
+            let mut text_shape = egui::epaint::TextShape::new(pos, galley, self.tile_text_color());
             text_shape.angle = angle;
             painter.add(egui::Shape::Text(text_shape));
         }
@@ -1309,10 +1339,7 @@ impl ExplorerApp {
         for i in 0..6 {
             let [a, b] = edge_endpoints(sc, zoom, i);
             let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-            let inset = egui::pos2(
-                mid.x + (sc.x - mid.x) * 0.25,
-                mid.y + (sc.y - mid.y) * 0.25,
-            );
+            let inset = egui::pos2(mid.x + (sc.x - mid.x) * 0.25, mid.y + (sc.y - mid.y) * 0.25);
             painter.text(
                 inset,
                 egui::Align2::CENTER_CENTER,
@@ -1341,7 +1368,9 @@ impl ExplorerApp {
         let t = Transducer::global();
         let mut segments: Vec<(usize, [egui::Pos2; 2])> = Vec::new();
         for &hex in hexes {
-            let Some((coords, rho)) = lookup(hex) else { continue };
+            let Some((coords, rho)) = lookup(hex) else {
+                continue;
+            };
             let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
             for (w, &dir) in DIRECTIONS.iter().enumerate() {
                 // Each interior edge once (from its E/NE/NW side); rim edges
@@ -1358,8 +1387,7 @@ impl ExplorerApp {
         }
         segments.sort_unstable_by_key(|&(order, _)| order);
         for (order, seg) in segments {
-            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt())
-                .min(self.zoom * 0.4);
+            let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt()).min(self.zoom * 0.4);
             painter.line_segment(seg, egui::Stroke::new(width, self.order_color(order)));
         }
     }
@@ -1370,10 +1398,7 @@ impl ExplorerApp {
         rect: egui::Rect,
         canvas_center: egui::Pos2,
     ) {
-        let stroke = egui::Stroke::new(
-            (self.zoom * 0.08).max(2.0),
-            self.order_color(1),
-        );
+        let stroke = egui::Stroke::new((self.zoom * 0.08).max(2.0), self.order_color(1));
         let cull_rect = rect.expand(self.zoom * 2.0);
         for region in &self.supertile_regions {
             for &hex in region {
@@ -1424,8 +1449,11 @@ impl ExplorerApp {
                     sc.x - (sz.x / 2.0 * cos_a - sz.y / 2.0 * sin_a),
                     sc.y - (sz.x / 2.0 * sin_a + sz.y / 2.0 * cos_a),
                 );
-                let mut text_shape =
-                    egui::epaint::TextShape::new(pos, galley, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200));
+                let mut text_shape = egui::epaint::TextShape::new(
+                    pos,
+                    galley,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
+                );
                 text_shape.angle = angle;
                 painter.add(egui::Shape::Text(text_shape));
             }
@@ -1434,10 +1462,8 @@ impl ExplorerApp {
                 for i in 0..6 {
                     let [a, b] = edge_endpoints(sc, zoom, i);
                     let mid = egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-                    let inset = egui::pos2(
-                        mid.x + (sc.x - mid.x) * 0.25,
-                        mid.y + (sc.y - mid.y) * 0.25,
-                    );
+                    let inset =
+                        egui::pos2(mid.x + (sc.x - mid.x) * 0.25, mid.y + (sc.y - mid.y) * 0.25);
                     painter.text(
                         inset,
                         egui::Align2::CENTER_CENTER,
@@ -1494,30 +1520,30 @@ impl ExplorerApp {
         }
 
         // Place on left click
-        if response.clicked_by(egui::PointerButton::Primary) {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
-                let was_empty = self.tiling.tiles.is_empty();
-                let patch = self.placement_patch();
-                for (&h, tile) in &patch.tiles {
-                    self.tiling.insert(h + hex, tile.clone());
-                }
-                self.invalid_edges = recompute_invalid(&self.tiling);
-                // A patch on an empty canvas roots a fresh hierarchy; any
-                // other placement is free-form and orphans the coords.
-                self.tracked = was_empty.then(|| self.placed_tree_state(hex));
+        if response.clicked_by(egui::PointerButton::Primary)
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
+            let was_empty = self.tiling.tiles.is_empty();
+            let patch = self.placement_patch();
+            for (&h, tile) in &patch.tiles {
+                self.tiling.insert(h + hex, tile.clone());
             }
+            self.invalid_edges = recompute_invalid(&self.tiling);
+            // A patch on an empty canvas roots a fresh hierarchy; any
+            // other placement is free-form and orphans the coords.
+            self.tracked = was_empty.then(|| self.placed_tree_state(hex));
         }
 
         // Erase single tile on right click
-        if response.secondary_clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
-                if self.tiling.tiles.remove(&hex).is_some() {
-                    self.tracked = None;
-                }
-                self.invalid_edges = recompute_invalid(&self.tiling);
+        if response.secondary_clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let hex = screen_to_hex(pos, self.zoom, self.pan, canvas_center);
+            if self.tiling.tiles.remove(&hex).is_some() {
+                self.tracked = None;
             }
+            self.invalid_edges = recompute_invalid(&self.tiling);
         }
     }
 }
@@ -1564,8 +1590,7 @@ impl eframe::App for ExplorerApp {
                     for &hex in &hexes {
                         if let Some(Some(tile)) = self.tree_cache.get(&hex) {
                             let sc = hex_to_screen(hex, self.zoom, self.pan, canvas_center);
-                            let mt =
-                                BASE_TILES[tile.type_idx as usize].rotate(tile.rot as usize);
+                            let mt = BASE_TILES[tile.type_idx as usize].rotate(tile.rot as usize);
                             Self::draw_edge_labels(&painter, &mt, sc, self.zoom);
                         }
                     }
@@ -1696,7 +1721,10 @@ mod tests {
                 let mut app = ExplorerApp {
                     mode: Mode::HexTiling,
                     place_mode: PlaceMode::Supertile,
-                    brush: Brush { type_idx: top, rotation: rot },
+                    brush: Brush {
+                        type_idx: top,
+                        rotation: rot,
+                    },
                     ..Default::default()
                 };
                 let at = Hex::new(3, -2);
@@ -1733,9 +1761,8 @@ mod tests {
             ..Default::default()
         };
         let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 800.0));
-        let some_count = |app: &ExplorerApp| {
-            app.tree_cache.values().filter(|e| e.is_some()).count()
-        };
+        let some_count =
+            |app: &ExplorerApp| app.tree_cache.values().filter(|e| e.is_some()).count();
 
         // The canvas starts empty; placing the root Γ is the first step.
         assert_eq!(app.tree_top, None);
@@ -1766,7 +1793,10 @@ mod tests {
         let mut tiling = MarkedTiling::new();
         for (&h, e) in &app.tree_cache {
             if let Some(tile) = e {
-                tiling.insert(h, BASE_TILES[tile.type_idx as usize].rotate(tile.rot as usize));
+                tiling.insert(
+                    h,
+                    BASE_TILES[tile.type_idx as usize].rotate(tile.rot as usize),
+                );
             }
         }
         assert_eq!(tiling.tiles.len(), 55);
@@ -1775,7 +1805,10 @@ mod tests {
         // Shrinking twice returns to the single pinned tile, a third time
         // back to the empty canvas.
         app.tree_strip();
-        assert_eq!((app.tree_top, app.tree_path.as_slice()), (Some(1), &[0u8][..]));
+        assert_eq!(
+            (app.tree_top, app.tree_path.as_slice()),
+            (Some(1), &[0u8][..])
+        );
         assert_eq!(some_count(&app), 8);
         app.tree_strip();
         assert_eq!((app.tree_top, app.tree_path.len()), (Some(0), 0));

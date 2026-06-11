@@ -1,11 +1,11 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::OnceLock;
 
-use crate::hex::{Hex, DIRECTIONS};
+use crate::hex::{DIRECTIONS, Hex};
 use crate::marked::MarkedTiling;
 use crate::spectre::Label;
 use crate::supertile::{AnchorPoint, SUPERTILE_ANCHORS};
-use crate::tiling::{anchor_vertex, canonical_supersubstitute_with_placements, BASE_TILES};
+use crate::tiling::{BASE_TILES, anchor_vertex, canonical_supersubstitute_with_placements};
 
 /// One child tile inside a base supertile, expressed in the supertile's local
 /// frame. `type_idx` indexes `BASE_TILES` / `TILE_NAMES` and `rotation` is the
@@ -18,7 +18,11 @@ pub struct Child {
 }
 
 const fn c(q: i32, r: i32, type_idx: u8, rotation: u8) -> Child {
-    Child { hex: Hex::new(q, r), type_idx, rotation }
+    Child {
+        hex: Hex::new(q, r),
+        type_idx,
+        rotation,
+    }
 }
 
 /// Children of each base supertile, ordered along the supertile's unique
@@ -31,6 +35,7 @@ const fn c(q: i32, r: i32, type_idx: u8, rotation: u8) -> Child {
 /// The cycle's position sequence is identical for all 8-tile supertiles
 /// (the underlying hex graph is the same); only the tile types and rotations
 /// at each position differ. Γ omits the (2,-2) cell.
+#[rustfmt::skip]
 pub const SUPERTILE_CHILDREN: [&[Child]; 9] = [
     // Γ — 7 tiles, no (2,-2)
     &[
@@ -252,7 +257,10 @@ fn build_boundary_tables() -> BoundaryTables {
                     let start = corner_vertex(c.hex, (6 - d) % 6);
                     let prev = by_start.insert(
                         start,
-                        EdgeSeg { child: i as u8, dir: d as u8 },
+                        EdgeSeg {
+                            child: i as u8,
+                            dir: d as u8,
+                        },
                     );
                     assert!(prev.is_none(), "type {p}: boundary pinched at {start:?}");
                 }
@@ -269,15 +277,16 @@ fn build_boundary_tables() -> BoundaryTables {
             let seg = by_start[&v];
             walk.push(seg);
             starts.push(v);
-            v = corner_vertex(
-                children[seg.child as usize].hex,
-                (5 - seg.dir as usize) % 6,
-            );
+            v = corner_vertex(children[seg.child as usize].hex, (5 - seg.dir as usize) % 6);
             if v == first {
                 break;
             }
         }
-        assert_eq!(walk.len(), total, "type {p}: boundary is not a single cycle");
+        assert_eq!(
+            walk.len(),
+            total,
+            "type {p}: boundary is not a single cycle"
+        );
 
         // Locate the 6 anchors on the walk.  They must appear in a consistent
         // cyclic order; because the substitution is orientation-reversing
@@ -294,8 +303,16 @@ fn build_boundary_tables() -> BoundaryTables {
         let span = |from: usize, to: usize| (to + total - from) % total;
         let descending = span(pos[0], pos[5]) < span(pos[0], pos[1]);
         for ai in 0..6 {
-            let next = if descending { (ai + 5) % 6 } else { (ai + 1) % 6 };
-            let skip = if descending { (ai + 4) % 6 } else { (ai + 2) % 6 };
+            let next = if descending {
+                (ai + 5) % 6
+            } else {
+                (ai + 1) % 6
+            };
+            let skip = if descending {
+                (ai + 4) % 6
+            } else {
+                (ai + 2) % 6
+            };
             assert!(
                 span(pos[ai], pos[next]) <= span(pos[ai], pos[skip]),
                 "type {p}: anchors out of cyclic order on boundary walk",
@@ -324,7 +341,10 @@ fn build_boundary_tables() -> BoundaryTables {
         assert_eq!(seg_lookup[p].len(), total);
     }
 
-    BoundaryTables { edge_seq, seg_lookup }
+    BoundaryTables {
+        edge_seq,
+        seg_lookup,
+    }
 }
 
 /// Symmetric relation over `(supertile type, super-edge)` pairs: which
@@ -400,8 +420,7 @@ fn build_edge_adjacency(bt: &BoundaryTables) -> EdgeAdjacency {
 /// finite-state transducer.
 pub fn neighbor(top: u8, coords: &TreeCoords, edge: u8) -> Option<(TreeCoords, u8)> {
     let types = types_along(top, &coords.path);
-    let (path, _, back) =
-        neighbor_rec(&types, &coords.path, edge, boundary_tables())?;
+    let (path, _, back) = neighbor_rec(&types, &coords.path, edge, boundary_tables())?;
     Some((TreeCoords { path }, back))
 }
 
@@ -461,8 +480,7 @@ pub fn canonical_patch_paths(
 ) -> (MarkedTiling<Label>, HashMap<Hex, TreeCoords>) {
     let mut tiling = MarkedTiling::new();
     tiling.insert(Hex::new(0, 0), BASE_TILES[top as usize].clone());
-    let mut paths: HashMap<Hex, Vec<u8>> =
-        HashMap::from([(Hex::new(0, 0), Vec::new())]);
+    let mut paths: HashMap<Hex, Vec<u8>> = HashMap::from([(Hex::new(0, 0), Vec::new())]);
 
     for _ in 0..depth {
         let (next, placements) = canonical_supersubstitute_with_placements(&tiling);
@@ -496,7 +514,7 @@ mod tests {
     use super::*;
     use crate::hex::DIRECTIONS;
     use crate::supertile::BASE_SUPERTILE_FNS;
-    use crate::tiling::{tile_id, BASE_TILES};
+    use crate::tiling::{BASE_TILES, tile_id};
 
     /// Every consecutive pair in the cycle (including last→first) must be hex-adjacent.
     #[test]
@@ -509,7 +527,10 @@ mod tests {
                 assert!(
                     DIRECTIONS.contains(&diff),
                     "supertile {} children {} -> {} not adjacent ({:?})",
-                    ti, i, (i + 1) % children.len(), diff
+                    ti,
+                    i,
+                    (i + 1) % children.len(),
+                    diff
                 );
             }
         }
@@ -538,11 +559,12 @@ mod tests {
                 for (d, &dir) in DIRECTIONS.iter().enumerate() {
                     if child_at(p, c.hex + dir).is_none() {
                         expected += 1;
-                        let &(e, k) = bt.seg_lookup[p]
-                            .get(&(i as u8, d as u8))
-                            .unwrap_or_else(|| panic!(
-                                "type {p}: boundary edge ({i}, {d}) missing from lookup"
-                            ));
+                        let &(e, k) =
+                            bt.seg_lookup[p]
+                                .get(&(i as u8, d as u8))
+                                .unwrap_or_else(|| {
+                                    panic!("type {p}: boundary edge ({i}, {d}) missing from lookup")
+                                });
                         let seg = bt.edge_seq[p][e as usize][k as usize];
                         assert_eq!((seg.child, seg.dir), (i as u8, d as u8));
                     }
@@ -550,7 +572,10 @@ mod tests {
             }
             assert_eq!(expected, if p == 0 { 20 } else { 22 }, "type {p}");
             let total: usize = bt.edge_seq[p].iter().map(|s| s.len()).sum();
-            assert_eq!(total, expected, "type {p}: super-edges don't cover boundary");
+            assert_eq!(
+                total, expected,
+                "type {p}: super-edges don't cover boundary"
+            );
         }
     }
 
@@ -655,7 +680,9 @@ mod tests {
     #[test]
     fn gamma_chain_has_infinite_wall() {
         for depth in [1, 5, 40] {
-            let coords = TreeCoords { path: vec![0; depth] };
+            let coords = TreeCoords {
+                path: vec![0; depth],
+            };
             for delta in [2, 3] {
                 assert_eq!(neighbor(0, &coords, delta), None, "depth {depth}");
             }
@@ -675,13 +702,18 @@ mod tests {
             let tiling = BASE_SUPERTILE_FNS[ti]();
             assert_eq!(tiling.tiles.len(), children.len(), "supertile {} size", ti);
             for child in children.iter() {
-                let actual = tiling.tiles.get(&child.hex)
+                let actual = tiling
+                    .tiles
+                    .get(&child.hex)
                     .unwrap_or_else(|| panic!("supertile {} missing tile at {:?}", ti, child.hex));
                 let expected = BASE_TILES[child.type_idx as usize].rotate(child.rotation as usize);
                 assert_eq!(
-                    actual.edges, expected.edges,
+                    actual.edges,
+                    expected.edges,
                     "supertile {} at {:?}: type/rotation mismatch (table says {:?})",
-                    ti, child.hex, tile_id(actual)
+                    ti,
+                    child.hex,
+                    tile_id(actual)
                 );
             }
         }

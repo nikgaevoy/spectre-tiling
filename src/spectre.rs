@@ -40,14 +40,23 @@ impl Neg for Label {
 
 // Edge arrays are indexed [E, NE, NW, W, SW, SE] matching DIRECTIONS[0..6].
 use Label::*;
+#[rustfmt::skip]
 pub const GAMMA:  MarkedTile<Label> = MarkedTile::new([NegDelta, Beta,     NegBeta,  NegAlpha, Alpha,   NegGamma  ]);
+#[rustfmt::skip]
 pub const DELTA:  MarkedTile<Label> = MarkedTile::new([Alpha,    NegGamma, NegZeta,  Gamma,    Beta,    NegEpsilon]);
+#[rustfmt::skip]
 pub const THETA:  MarkedTile<Label> = MarkedTile::new([Beta,     Eta,      NegBeta,  Gamma,    Beta,    Theta     ]);
+#[rustfmt::skip]
 pub const LAMBDA: MarkedTile<Label> = MarkedTile::new([Alpha,    NegTheta, NegBeta,  Gamma,    Beta,    NegEpsilon]);
+#[rustfmt::skip]
 pub const XI:     MarkedTile<Label> = MarkedTile::new([Beta,     Eta,      NegBeta,  NegAlpha, Epsilon, Theta     ]);
+#[rustfmt::skip]
 pub const PI:     MarkedTile<Label> = MarkedTile::new([Alpha,    NegTheta, NegBeta,  NegAlpha, Epsilon, NegEpsilon]);
+#[rustfmt::skip]
 pub const SIGMA:  MarkedTile<Label> = MarkedTile::new([Alpha,    NegGamma, Delta,    Zeta,     Beta,    NegEpsilon]);
+#[rustfmt::skip]
 pub const PHI:    MarkedTile<Label> = MarkedTile::new([Epsilon,  Eta,      NegBeta,  Gamma,    Beta,    NegEpsilon]);
+#[rustfmt::skip]
 pub const PSI:    MarkedTile<Label> = MarkedTile::new([Epsilon,  Eta,      NegBeta,  NegAlpha, Epsilon, NegEpsilon]);
 
 #[cfg(test)]

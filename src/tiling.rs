@@ -1,15 +1,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::hex::{Hex, DIRECTIONS};
+use crate::hex::{DIRECTIONS, Hex};
 use crate::marked::{MarkedTile, MarkedTiling};
-use crate::spectre::{Label, DELTA, GAMMA, LAMBDA, PHI, PI, PSI, SIGMA, THETA, XI};
+use crate::spectre::{DELTA, GAMMA, LAMBDA, Label, PHI, PI, PSI, SIGMA, THETA, XI};
 use crate::supertile::{AnchorPoint, BASE_SUPERTILE_FNS, SUPERTILE_ANCHORS};
 
 pub const BASE_TILES: [MarkedTile<Label>; 9] =
     [GAMMA, DELTA, THETA, LAMBDA, XI, PI, SIGMA, PHI, PSI];
 
-pub const TILE_NAMES: [&str; 9] =
-    ["Γ", "Δ", "Θ", "Λ", "Ξ", "Π", "Σ", "Φ", "Ψ"];
+pub const TILE_NAMES: [&str; 9] = ["Γ", "Δ", "Θ", "Λ", "Ξ", "Π", "Σ", "Φ", "Ψ"];
 
 /// Returns `(type_index, rotation)` for a known tile, or `None`.
 pub fn tile_id(tile: &MarkedTile<Label>) -> Option<(usize, usize)> {
@@ -97,11 +96,9 @@ pub fn generate_patch(target_size: usize) -> MarkedTiling<Label> {
                 let mut safe = true;
                 for &dir in &DIRECTIONS {
                     let nb = pos + dir;
-                    if !tiling.tiles.contains_key(&nb) {
-                        if compatible_ids(&tiling, nb).is_empty() {
-                            safe = false;
-                            break;
-                        }
+                    if !tiling.tiles.contains_key(&nb) && compatible_ids(&tiling, nb).is_empty() {
+                        safe = false;
+                        break;
                     }
                 }
 
@@ -172,11 +169,13 @@ pub fn infer_supertile_offset(
     // rotation, that rotation is the extra spin `to` needs.  Only when no such
     // 60° rotation exists (e.g. the edge lengths disagree) does no answer
     // exist; that is the assertion case.
-    let ctx = || format!(
-        "from={}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
+    let ctx = || {
+        format!(
+            "from={}[{from_type}] rot={from_rot}, edge_dir={edge_dir}, \
          to={}[{to_type}] rot={to_rot}",
-        TILE_NAMES[from_type], TILE_NAMES[to_type],
-    );
+            TILE_NAMES[from_type], TILE_NAMES[to_type],
+        )
+    };
 
     let f_vec = (v_f1.0 - v_f2.0, v_f1.1 - v_f2.1);
     let mut tv = (v_t2.0 - v_t1.0, v_t2.1 - v_t1.1);
@@ -189,10 +188,12 @@ pub fn infer_supertile_offset(
                 false
             }
         })
-        .unwrap_or_else(|| panic!(
-            "no 60° rotation aligns the t-anchor edge with the f-anchor edge ({})",
-            ctx(),
-        ));
+        .unwrap_or_else(|| {
+            panic!(
+                "no 60° rotation aligns the t-anchor edge with the f-anchor edge ({})",
+                ctx(),
+            )
+        });
 
     // World position of t2 after the extra rotation; offset = F1 − rotated T2.
     let mut t2 = v_t2;
@@ -201,10 +202,18 @@ pub fn infer_supertile_offset(
     }
     let dx = v_f1.0 - t2.0;
     let dy = v_f1.1 - t2.1;
-    assert!(dy % 3 == 0, "offset is not a hex lattice translation ({})", ctx());
+    assert!(
+        dy % 3 == 0,
+        "offset is not a hex lattice translation ({})",
+        ctx()
+    );
     let oy = -dy / 3;
     let two_ox = dx - oy;
-    assert!(two_ox % 2 == 0, "offset is not a hex lattice translation ({})", ctx());
+    assert!(
+        two_ox % 2 == 0,
+        "offset is not a hex lattice translation ({})",
+        ctx()
+    );
 
     ((to_rot + extra) % 6, Hex::new(two_ox / 2, oy))
 }
@@ -248,9 +257,8 @@ fn supersubstitute_with_placements_from(
     tiling: &MarkedTiling<Label>,
     start: Hex,
 ) -> (MarkedTiling<Label>, HashMap<Hex, Placement>) {
-    let id_at = |pos: &Hex| {
-        tile_id(&tiling.tiles[pos]).expect("unrecognized tile in supersubstitute")
-    };
+    let id_at =
+        |pos: &Hex| tile_id(&tiling.tiles[pos]).expect("unrecognized tile in supersubstitute");
 
     let mut known: HashMap<Hex, (usize, usize, Hex)> = HashMap::new();
     let mut queue: VecDeque<Hex> = VecDeque::new();
@@ -289,7 +297,14 @@ fn supersubstitute_with_placements_from(
         for (local_hex, tile) in BASE_SUPERTILE_FNS[type_idx]().rotate(rotation).tiles {
             result.insert(local_hex + offset, tile);
         }
-        placements.insert(source, Placement { type_idx, rotation, offset });
+        placements.insert(
+            source,
+            Placement {
+                type_idx,
+                rotation,
+                offset,
+            },
+        );
     }
     (result, placements)
 }
@@ -450,8 +465,7 @@ mod tests {
         // tile_id is the inverse of (BASE_TILES[ti].rotate(rot)).
         for (i, base) in BASE_TILES.iter().enumerate() {
             for rot in 0..6 {
-                let (ti, r) = tile_id(&base.rotate(rot))
-                    .expect("known tile not recognized");
+                let (ti, r) = tile_id(&base.rotate(rot)).expect("known tile not recognized");
                 assert_eq!(ti, i);
                 assert_eq!(r, rot);
             }
@@ -466,7 +480,11 @@ mod tests {
         let east = Hex::new(0, 0) + DIRECTIONS[0];
         let ids = compatible_ids(&t, east);
         assert_eq!(ids.len(), 1, "expected exactly one compatible E-neighbor");
-        assert_eq!(ids[0], (6, 1), "E-neighbor should be SIGMA(rot=1) [index 6]");
+        assert_eq!(
+            ids[0],
+            (6, 1),
+            "E-neighbor should be SIGMA(rot=1) [index 6]"
+        );
     }
 
     #[test]
@@ -484,9 +502,11 @@ mod tests {
         let t = supertile_gamma();
         for (&pa, tile_a) in &t.tiles {
             let (ta, ra) = tile_id(tile_a).unwrap();
-            for d in 0..6 {
-                let pb = pa + DIRECTIONS[d];
-                let Some(tile_b) = t.tiles.get(&pb) else { continue };
+            for (d, &dir) in DIRECTIONS.iter().enumerate() {
+                let pb = pa + dir;
+                let Some(tile_b) = t.tiles.get(&pb) else {
+                    continue;
+                };
                 let (tb, rb) = tile_id(tile_b).unwrap();
                 let [f1, f2] = edge_corners(d, ra);
                 let [u1, u2] = edge_corners((d + 3) % 6, rb);
@@ -497,12 +517,25 @@ mod tests {
                 let lf = eucl_sq((vf1.0 - vf2.0, vf1.1 - vf2.1));
                 let lt = eucl_sq((vt2.0 - vt1.0, vt2.1 - vt1.1));
                 assert_eq!(
-                    lf, lt,
+                    lf,
+                    lt,
                     "anchor edge length mismatch: {}({}) at ({},{}) --d{}--> {}({}) at ({},{}) \
                      | anchors f[{},{}] t[{},{}] | Eucl² f={} t={}",
-                    TILE_NAMES[ta], ra, pa.q, pa.r, d,
-                    TILE_NAMES[tb], rb, pb.q, pb.r,
-                    f1, f2, u1, u2, lf, lt,
+                    TILE_NAMES[ta],
+                    ra,
+                    pa.q,
+                    pa.r,
+                    d,
+                    TILE_NAMES[tb],
+                    rb,
+                    pb.q,
+                    pb.r,
+                    f1,
+                    f2,
+                    u1,
+                    u2,
+                    lf,
+                    lt,
                 );
             }
         }
@@ -536,11 +569,7 @@ mod tests {
         }
 
         if seen.len() != result.tiles.len() {
-            let mut unreached: Vec<_> = result
-                .tiles
-                .keys()
-                .filter(|h| !seen.contains(h))
-                .collect();
+            let mut unreached: Vec<_> = result.tiles.keys().filter(|h| !seen.contains(h)).collect();
             unreached.sort_by_key(|h| (h.q, h.r));
             panic!(
                 "result is disconnected: reached {}/{} tiles from {:?}; \
@@ -567,8 +596,13 @@ mod tests {
         let base_result = supersubstitute(&base);
 
         let shifts = [
-            Hex::new(0, 0), Hex::new(1, 0), Hex::new(-3, 4), Hex::new(7, -2),
-            Hex::new(0, -5), Hex::new(-10, 10), Hex::new(2, 3),
+            Hex::new(0, 0),
+            Hex::new(1, 0),
+            Hex::new(-3, 4),
+            Hex::new(7, -2),
+            Hex::new(0, -5),
+            Hex::new(-10, 10),
+            Hex::new(2, 3),
         ];
 
         let mut failures: Vec<(usize, Hex, usize, usize)> = Vec::new();
@@ -577,9 +611,8 @@ mod tests {
             // The BFS fixes an arbitrary global rotation via the start tile,
             // so two valid runs are equal up to rigid motion, not just
             // translation.  Compare against all 6 rotations of the baseline.
-            let expected_orbit: [_; 6] = std::array::from_fn(|k| {
-                normalize(&base_result.rotate((rot + k) % 6))
-            });
+            let expected_orbit: [_; 6] =
+                std::array::from_fn(|k| normalize(&base_result.rotate((rot + k) % 6)));
 
             for &shift in &shifts {
                 let mut input = MarkedTiling::new();
@@ -636,15 +669,19 @@ mod tests {
                 std::array::from_fn(|k| normalize(&base_output.rotate((n + k) % 6)));
 
             assert_eq!(
-                actual.len(), expected_orbit[0].len(),
+                actual.len(),
+                expected_orbit[0].len(),
                 "n={}: tile-count differs ({} vs {})",
-                n, actual.len(), expected_orbit[0].len(),
+                n,
+                actual.len(),
+                expected_orbit[0].len(),
             );
 
             assert!(
                 expected_orbit.contains(&actual),
                 "n={}: result not rigid-motion-equivalent to baseline.rotate({})",
-                n, n,
+                n,
+                n,
             );
         }
     }
@@ -682,7 +719,8 @@ mod tests {
                 assert!(
                     result.is_valid(),
                     "supersubstitute({}.rotate({})) produced an invalid tiling",
-                    TILE_NAMES[i], rot,
+                    TILE_NAMES[i],
+                    rot,
                 );
             }
         }
@@ -703,7 +741,8 @@ mod tests {
                     twice.is_valid(),
                     "supersubstitute(supersubstitute({}.rotate({}))) \
                      produced an invalid tiling",
-                    TILE_NAMES[i], rot,
+                    TILE_NAMES[i],
+                    rot,
                 );
             }
         }
@@ -734,7 +773,9 @@ mod tests {
                 assert!(
                     overlap.is_empty(),
                     "supertiles {} and {} overlap at {:?}",
-                    i, j, overlap,
+                    i,
+                    j,
+                    overlap,
                 );
             }
         }
@@ -767,7 +808,8 @@ mod tests {
                 canonical_hash(&shifted),
                 h0,
                 "shift ({},{}) changes canonical_hash",
-                shift.q, shift.r,
+                shift.q,
+                shift.r,
             );
         }
     }
@@ -785,7 +827,10 @@ mod tests {
         for _ in 0..4 {
             t = supersubstitute(&t);
         }
-        assert!(t.is_valid(), "iterated supersubstitute produced an invalid tiling");
+        assert!(
+            t.is_valid(),
+            "iterated supersubstitute produced an invalid tiling"
+        );
 
         const EXPECTED_TILES: usize = 3409;
         const EXPECTED_HASH: u64 = 4960813579813931908;
@@ -818,13 +863,17 @@ mod tests {
                 got.tiles.len(),
                 expected.tiles.len(),
                 "supertile {}: tile count differs ({} vs {})",
-                TILE_NAMES[ti], got.tiles.len(), expected.tiles.len(),
+                TILE_NAMES[ti],
+                got.tiles.len(),
+                expected.tiles.len(),
             );
             for (&hex, tile) in &expected.tiles {
-                let g = got.tiles.get(&hex).unwrap_or_else(|| panic!(
-                    "supertile {}: canonical result missing tile at {:?}",
-                    TILE_NAMES[ti], hex,
-                ));
+                let g = got.tiles.get(&hex).unwrap_or_else(|| {
+                    panic!(
+                        "supertile {}: canonical result missing tile at {:?}",
+                        TILE_NAMES[ti], hex,
+                    )
+                });
                 assert_eq!(
                     g.edges, tile.edges,
                     "supertile {}: tile differs at {:?}",
@@ -844,15 +893,19 @@ mod tests {
 
         for k in 1..=4 {
             t = canonical_supersubstitute(&t);
-            let at_origin = t.tiles.get(&Hex::new(0, 0)).unwrap_or_else(|| {
-                panic!("after k={k} canonical iterations, no tile at (0,0)")
-            });
+            let at_origin = t
+                .tiles
+                .get(&Hex::new(0, 0))
+                .unwrap_or_else(|| panic!("after k={k} canonical iterations, no tile at (0,0)"));
             assert_eq!(
                 tile_id(at_origin),
                 Some((0, 0)),
                 "after k={k} canonical iterations, tile at (0,0) is not GAMMA rotation 0"
             );
-            assert!(t.is_valid(), "k={k}: canonical result is not edge-consistent");
+            assert!(
+                t.is_valid(),
+                "k={k}: canonical result is not edge-consistent"
+            );
         }
     }
 

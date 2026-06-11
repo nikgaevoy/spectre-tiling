@@ -15,7 +15,7 @@
 //!
 //! Vertices live in ℤ[d], d = exp(iπ/6), so all coordinates are exact.
 
-use crate::hex::{Hex, DIRECTIONS};
+use crate::hex::{DIRECTIONS, Hex};
 
 /// Point of the plane as an integer combination of {1, d, d², d³} where
 /// d = exp(iπ/6) (a 30° rotation); d⁴ = d² − 1.
@@ -104,11 +104,7 @@ pub const SPECTRE_TRIANGLES: [[usize; 3]; 12] = [
 
 /// Number of spectres a hexagon of type `t` carries.
 pub fn num_spectres(t: u8) -> u8 {
-    if t == 0 {
-        2
-    } else {
-        1
-    }
+    if t == 0 { 2 } else { 1 }
 }
 
 /// One cell of the spectre transition maps (Tatham's `struct MapEntry`).
@@ -152,6 +148,7 @@ const fn e(start: u8, len: u8) -> MapEdge {
 // G D J L X P S F Y = Γ Δ Θ Λ Ξ Π Σ Φ Ψ matches BASE_TILES / TILE_NAMES.
 
 // Γ
+#[rustfmt::skip]
 const SPECMAP_G: [MapEntry; 28] = [
     m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 1, 2), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 2),
@@ -161,6 +158,7 @@ const SPECMAP_G: [MapEntry; 28] = [
     m(false, 4, 3), m(false, 4, 2),
 ];
 const SPECEDGES_G: [MapEdge; 6] = [e(0, 3), e(3, 3), e(6, 3), e(9, 2), e(11, 6), e(17, 3)];
+#[rustfmt::skip]
 const SPECIN_G: [MapEntry; 20] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 1, 3), m(true, 1, 2), m(true, 1, 1),
@@ -168,60 +166,70 @@ const SPECIN_G: [MapEntry; 20] = [
     m(true, 1, 9), m(true, 1, 8), m(true, 0, 9),
 ];
 // Δ
+#[rustfmt::skip]
 const SPECMAP_D: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1), m(false, 5, 0),
     m(false, 4, 2), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_D: [MapEdge; 6] = [e(0, 2), e(2, 2), e(4, 3), e(7, 2), e(9, 3), e(12, 2)];
+#[rustfmt::skip]
 const SPECIN_D: [MapEntry; 14] = [
     m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3), m(true, 0, 2),
     m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12), m(true, 0, 11),
     m(true, 0, 10), m(true, 0, 9), m(true, 0, 8),
 ];
 // Θ
+#[rustfmt::skip]
 const SPECMAP_J: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1),
     m(false, 5, 0), m(false, 4, 2), m(false, 4, 1), m(false, 4, 0),
 ];
 const SPECEDGES_J: [MapEdge; 6] = [e(0, 3), e(3, 2), e(5, 3), e(8, 1), e(9, 3), e(12, 2)];
+#[rustfmt::skip]
 const SPECIN_J: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
     m(true, 0, 11), m(true, 0, 10), m(true, 0, 9),
 ];
 // Λ
+#[rustfmt::skip]
 const SPECMAP_L: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 0),
     m(false, 4, 2), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_L: [MapEdge; 6] = [e(0, 3), e(3, 2), e(5, 3), e(8, 2), e(10, 3), e(13, 1)];
+#[rustfmt::skip]
 const SPECIN_L: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
     m(true, 0, 11), m(true, 0, 10), m(true, 0, 9),
 ];
 // Ξ
+#[rustfmt::skip]
 const SPECMAP_X: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 1), m(false, 2, 0), m(false, 1, 2), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1),
     m(false, 5, 0), m(false, 4, 2), m(false, 4, 1), m(false, 4, 0),
 ];
 const SPECEDGES_X: [MapEdge; 6] = [e(0, 3), e(3, 3), e(6, 2), e(8, 1), e(9, 3), e(12, 2)];
+#[rustfmt::skip]
 const SPECIN_X: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
     m(true, 0, 11), m(true, 0, 10), m(true, 0, 9),
 ];
 // Π
+#[rustfmt::skip]
 const SPECMAP_P: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 1), m(false, 2, 0), m(false, 1, 2), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 0),
     m(false, 4, 2), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_P: [MapEdge; 6] = [e(0, 3), e(3, 3), e(6, 2), e(8, 2), e(10, 3), e(13, 1)];
+#[rustfmt::skip]
 const SPECIN_P: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
@@ -229,12 +237,14 @@ const SPECIN_P: [MapEntry; 14] = [
 ];
 // Σ — its boundary has a four-edge spur (positions 4–7 of edge 0's segment
 // and positions 0–1 of edge 1's): entering there bounces straight back out.
+#[rustfmt::skip]
 const SPECMAP_S: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 0, 3),
     m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1), m(false, 5, 0),
     m(false, 4, 2), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_S: [MapEdge; 6] = [e(0, 6), e(6, 2), e(8, 3), e(11, 2), e(13, 3), e(16, 2)];
+#[rustfmt::skip]
 const SPECIN_S: [MapEntry; 18] = [
     m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(false, 1, 1), m(false, 1, 0),
     m(false, 0, 5), m(false, 0, 4), m(true, 0, 3), m(true, 0, 2), m(true, 0, 1), m(true, 0, 0),
@@ -242,24 +252,28 @@ const SPECIN_S: [MapEntry; 18] = [
     m(true, 0, 8),
 ];
 // Φ
+#[rustfmt::skip]
 const SPECMAP_F: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 2), m(false, 2, 1), m(false, 2, 0), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1),
     m(false, 5, 0), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_F: [MapEdge; 6] = [e(0, 3), e(3, 2), e(5, 3), e(8, 2), e(10, 2), e(12, 2)];
+#[rustfmt::skip]
 const SPECIN_F: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
     m(true, 0, 11), m(true, 0, 10), m(true, 0, 9),
 ];
 // Ψ
+#[rustfmt::skip]
 const SPECMAP_Y: [MapEntry; 14] = [
     m(false, 3, 0), m(false, 2, 1), m(false, 2, 0), m(false, 1, 2), m(false, 1, 1),
     m(false, 1, 0), m(false, 0, 2), m(false, 0, 1), m(false, 0, 0), m(false, 5, 1),
     m(false, 5, 0), m(false, 4, 1), m(false, 4, 0), m(false, 3, 1),
 ];
 const SPECEDGES_Y: [MapEdge; 6] = [e(0, 3), e(3, 3), e(6, 2), e(8, 2), e(10, 2), e(12, 2)];
+#[rustfmt::skip]
 const SPECIN_Y: [MapEntry; 14] = [
     m(true, 0, 8), m(true, 0, 7), m(true, 0, 6), m(true, 0, 5), m(true, 0, 4), m(true, 0, 3),
     m(true, 0, 2), m(true, 0, 1), m(true, 0, 0), m(true, 0, 13), m(true, 0, 12),
@@ -269,12 +283,13 @@ const SPECIN_Y: [MapEntry; 14] = [
 /// `SPECMAP[t][14 * spectre_index + spectre_edge]` — what crossing that
 /// spectre edge does, for a type-`t` hexagon in its base orientation.
 pub const SPECMAP: [&[MapEntry]; 9] = [
-    &SPECMAP_G, &SPECMAP_D, &SPECMAP_J, &SPECMAP_L, &SPECMAP_X, &SPECMAP_P, &SPECMAP_S,
-    &SPECMAP_F, &SPECMAP_Y,
+    &SPECMAP_G, &SPECMAP_D, &SPECMAP_J, &SPECMAP_L, &SPECMAP_X, &SPECMAP_P, &SPECMAP_S, &SPECMAP_F,
+    &SPECMAP_Y,
 ];
 
 /// `SPECEDGES[t][j]` — boundary segment of hexagon edge `j` (Tatham
 /// numbering) of a type-`t` hexagon.
+#[rustfmt::skip]
 pub const SPECEDGES: [&[MapEdge; 6]; 9] = [
     &SPECEDGES_G, &SPECEDGES_D, &SPECEDGES_J, &SPECEDGES_L, &SPECEDGES_X, &SPECEDGES_P,
     &SPECEDGES_S, &SPECEDGES_F, &SPECEDGES_Y,
@@ -383,8 +398,7 @@ mod tests {
                 (h, (t, path_rotation(top, &c.path)))
             })
             .collect();
-        let mut tile_at =
-            |from: Hex, w: usize| tiles.get(&(from + DIRECTIONS[w])).copied();
+        let mut tile_at = |from: Hex, w: usize| tiles.get(&(from + DIRECTIONS[w])).copied();
 
         let seed = Hex::new(0, 0);
         let mut placed: HashMap<(Hex, u8), [Zd; 14]> = HashMap::new();
@@ -394,9 +408,7 @@ mod tests {
             let poly = placed[&(hex, idx)];
             let start = tiles[&hex];
             for edge in 0..14u8 {
-                let Some((h2, i2, e2)) =
-                    spectre_step(hex, start, idx, edge, &mut tile_at)
-                else {
+                let Some((h2, i2, e2)) = spectre_step(hex, start, idx, edge, &mut tile_at) else {
                     continue;
                 };
                 // Reciprocity: stepping back returns here across `edge`.
@@ -411,10 +423,9 @@ mod tests {
                     e2 as usize,
                 );
                 match placed.get(&(h2, i2)) {
-                    Some(prev) => assert_eq!(
-                        *prev, p2,
-                        "top {top}: conflicting placement of {h2:?}#{i2}",
-                    ),
+                    Some(prev) => {
+                        assert_eq!(*prev, p2, "top {top}: conflicting placement of {h2:?}#{i2}",)
+                    }
                     None => {
                         placed.insert((h2, i2), p2);
                         queue.push_back((h2, i2));
@@ -423,10 +434,7 @@ mod tests {
             }
         }
 
-        let expected: usize = tiles
-            .values()
-            .map(|&(t, _)| num_spectres(t) as usize)
-            .sum();
+        let expected: usize = tiles.values().map(|&(t, _)| num_spectres(t) as usize).sum();
         assert_eq!(placed.len(), expected, "top {top} depth {depth}: count");
     }
 

@@ -31,7 +31,10 @@ impl AnchorPoint {
 
     /// Convert from supertile-local to global hex coordinates.
     pub fn translate(self, origin: Hex) -> Self {
-        Self { hex: self.hex + origin, ..self }
+        Self {
+            hex: self.hex + origin,
+            ..self
+        }
     }
 }
 
@@ -42,6 +45,7 @@ const fn ap(q: i32, r: i32, corner: u8) -> AnchorPoint {
 /// Base anchor points (rotation 0) for each supertile type.
 /// Index order: Γ=0 Δ=1 Θ=2 Λ=3 Ξ=4 Π=5 Σ=6 Φ=7 Ψ=8  (matches BASE_TILES / TILE_NAMES).
 /// Fill in hex coordinates and corner indices (0–5) manually.
+#[rustfmt::skip]
 pub const SUPERTILE_ANCHORS: [[AnchorPoint; 6]; 9] = [
     // Γ (supertile_gamma)
     [ap(0,-1,3), ap(0,0,3), ap(0,1,4), ap(1,1,5), ap(2,-1,0), ap(0,-1,1)],
