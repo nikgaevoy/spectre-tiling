@@ -1,5 +1,7 @@
 # spectre-tiling
 
+[![Tests](https://github.com/nikgaevoy/spectre-tiling/actions/workflows/test.yml/badge.svg)](https://github.com/nikgaevoy/spectre-tiling/actions/workflows/test.yml)
+
 A Rust playground for the [spectre](https://cs.uwaterloo.ca/~csk/spectre/) —
 the aperiodic monotile discovered in 2023 — built around **combinatorial
 coordinates**: tiles are tracked as paths through the substitution hierarchy,
