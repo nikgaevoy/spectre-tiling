@@ -35,7 +35,10 @@ An egui app with three modes:
   Each hexagon carries one spectre, except Γ which carries the two-tile
   "mystic" pair.  Every tile is the same shape (never reflected), but the
   second tile of each pair — drawn darker — sits at an odd multiple of 30°
-  where every other spectre sits at an even one.
+  where every other spectre sits at an even one.  An *Edges* drop-down picks
+  which of the three published shapes is drawn (Fig. 1.1 of the paper): the
+  straight-edged polygon Tile(1,1), or a Spectre with every edge replaced by
+  a wiggly or smooth curve.
 - **Hex tiling** — a free-form editor over a stored tiling: place single
   marked tiles or whole supertiles, erase, validate edge labels, and apply
   the substitution to everything at once.
@@ -48,8 +51,9 @@ so the substitution hierarchy is visible at a glance.
 
 Controls: drag to pan, scroll to zoom, left/right click to place/erase in
 Hex-tiling mode (`Q`/`E` rotate the brush).  The View section toggles
-colors, names, paths, edge labels and borders, and picks the border-order
-palette (plain, heat, ice, viridis, or gold fade).
+colors, names, paths, edge labels and borders, picks the border-order
+palette (plain, heat, ice, viridis, or gold fade), and — in Spectre mode —
+the tile edge style.
 
 ## Library layout
 

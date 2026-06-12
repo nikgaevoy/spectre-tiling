@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use eframe::egui;
 use spectre_tiling::hex::{DIRECTIONS, Hex};
@@ -109,6 +110,63 @@ impl BorderPalette {
     }
 }
 
+// The three published shapes of the tile (Fig. 1.1 of the spectre paper):
+// the straight-edged 14-gon Tile(1,1), and two Spectres obtained from it by
+// replacing every edge with a curve.  Any curve symmetric under 180°
+// rotation about the edge midpoint traces the same arc from both sides of a
+// glued edge, so the tiling itself is untouched — only the outline drawn
+// for each tile changes.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum EdgeStyle {
+    // Straight unit edges: the polygon Tile(1,1).
+    Tile11,
+    // Each edge a double wave (the paper's Fig. 1.1, centre).
+    Wiggly,
+    // Each edge one smooth S-curve (the paper's Fig. 1.1, right).
+    Smooth,
+}
+
+impl EdgeStyle {
+    const ALL: [EdgeStyle; 3] = [EdgeStyle::Tile11, EdgeStyle::Wiggly, EdgeStyle::Smooth];
+
+    fn name(self) -> &'static str {
+        match self {
+            EdgeStyle::Tile11 => "Tile(1,1)",
+            EdgeStyle::Wiggly => "Spectre (wiggly)",
+            EdgeStyle::Smooth => "Spectre (smooth)",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            EdgeStyle::Tile11 => 0,
+            EdgeStyle::Wiggly => 1,
+            EdgeStyle::Smooth => 2,
+        }
+    }
+
+    // Outline points contributed per edge (each edge owns its starting
+    // corner, so straight edges need just the corner itself).
+    fn samples(self) -> usize {
+        match self {
+            EdgeStyle::Tile11 => 1,
+            EdgeStyle::Wiggly | EdgeStyle::Smooth => 12,
+        }
+    }
+
+    // Perpendicular deviation of the edge curve at parameter t ∈ [0, 1], in
+    // units of the edge length.  Odd around the midpoint (f(1−t) = −f(t)),
+    // which is exactly the gluing condition above.
+    fn offset(self, t: f32) -> f32 {
+        use std::f32::consts::TAU;
+        match self {
+            EdgeStyle::Tile11 => 0.0,
+            EdgeStyle::Wiggly => 0.13 * (2.0 * TAU * t).sin(),
+            EdgeStyle::Smooth => 0.22 * (TAU * t).sin(),
+        }
+    }
+}
+
 // Supertile constructors in the same order as TILE_NAMES / BASE_TILES.
 const BASE_SUPERTILE_FNS: [fn() -> MarkedTiling<Label>; 9] = [
     supertile_gamma,
@@ -182,6 +240,95 @@ fn point_in_polygon(p: egui::Pos2, pts: &[egui::Pos2]) -> bool {
         j = i;
     }
     inside
+}
+
+// Sampled outline of a spectre with the given 14 corner positions: edge i
+// contributes points [i·S, (i+1)·S), starting at corner i.  On screen every
+// placed tile is a rotation/translation of one shape (the tiling never
+// mirrors it), so this indexing — and hence one triangulation per style —
+// fits all tiles.
+fn spectre_outline(pts: &[egui::Pos2; 14], style: EdgeStyle) -> Vec<egui::Pos2> {
+    let s = style.samples();
+    let mut out = Vec::with_capacity(14 * s);
+    for i in 0..14 {
+        let (a, b) = (pts[i], pts[(i + 1) % 14]);
+        let d = b - a;
+        let perp = egui::vec2(-d.y, d.x);
+        for k in 0..s {
+            let t = k as f32 / s as f32;
+            out.push(a + d * t + perp * style.offset(t));
+        }
+    }
+    out
+}
+
+// Ear-clipping triangulation of a simple polygon, as index triples.
+fn ear_clip(pts: &[egui::Pos2]) -> Vec<[u32; 3]> {
+    fn cross(o: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+    let n = pts.len();
+    let mut idx: Vec<u32> = (0..n as u32).collect();
+    let mut tris = Vec::with_capacity(n - 2);
+    // The signed area fixes which turn direction counts as convex.
+    let area2: f32 = (0..n)
+        .map(|i| cross(egui::Pos2::ZERO, pts[i], pts[(i + 1) % n]))
+        .sum();
+    let sign = if area2 >= 0.0 { 1.0 } else { -1.0 };
+    let mut i = 0;
+    let mut stuck = 0;
+    while idx.len() > 3 {
+        let m = idx.len();
+        let (pi, ci, ni) = (idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]);
+        let (p, c, q) = (pts[pi as usize], pts[ci as usize], pts[ni as usize]);
+        // An ear: a convex corner whose triangle contains no other vertex.
+        let ear = sign * cross(p, c, q) >= 0.0
+            && idx.iter().all(|&j| {
+                j == pi || j == ci || j == ni || {
+                    let x = pts[j as usize];
+                    !(sign * cross(p, c, x) > 0.0
+                        && sign * cross(c, q, x) > 0.0
+                        && sign * cross(q, p, x) > 0.0)
+                }
+            });
+        // `stuck` breaks numerically degenerate stalemates: after a full
+        // fruitless lap, clip anyway rather than loop forever.
+        if ear || stuck > m {
+            tris.push([pi, ci, ni]);
+            idx.remove(i);
+            stuck = 0;
+        } else {
+            i += 1;
+            stuck += 1;
+        }
+        if i >= idx.len() {
+            i = 0;
+        }
+    }
+    tris.push([idx[0], idx[1], idx[2]]);
+    tris
+}
+
+// Triangulation of the canonical outline, computed once per style — valid
+// for every placed spectre, see `spectre_outline`.
+fn style_triangles(style: EdgeStyle) -> &'static [[u32; 3]] {
+    static CACHE: [OnceLock<Vec<[u32; 3]>>; 3] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    CACHE[style.index()].get_or_init(|| {
+        if style == EdgeStyle::Tile11 {
+            return SPECTRE_TRIANGLES
+                .iter()
+                .map(|tri| tri.map(|i| i as u32))
+                .collect();
+        }
+        let poly = spectre_place(Zd::ZERO, Zd::ONE, 0);
+        // Same y-down frame as the screen, so the winding matches too.
+        let pts: [egui::Pos2; 14] = std::array::from_fn(|i| {
+            let (x, y) = poly[i].to_xy();
+            egui::pos2(x as f32, -y as f32)
+        });
+        ear_clip(&spectre_outline(&pts, style))
+    })
 }
 
 fn screen_to_hex(pos: egui::Pos2, zoom: f32, pan: egui::Vec2, canvas_center: egui::Pos2) -> Hex {
@@ -403,6 +550,7 @@ struct ExplorerApp {
     show_paths: bool,
     show_colors: bool,
     border_palette: BorderPalette,
+    edge_style: EdgeStyle,
 }
 
 impl Default for ExplorerApp {
@@ -432,6 +580,7 @@ impl Default for ExplorerApp {
             show_paths: true,
             show_colors: true,
             border_palette: BorderPalette::Plain,
+            edge_style: EdgeStyle::Tile11,
         }
     }
 }
@@ -696,21 +845,22 @@ impl ExplorerApp {
         self.tree_cache = tree;
     }
 
-    // Draw the placed spectres: filled via the fixed triangulation (the
-    // 14-gon is concave), outlined, named after their hexagon's type, with
-    // supertile borders of every order on top (a spectre edge inherits the
-    // order of the hexagon edge it crosses; Γ's internal pair edge and
-    // sibling borders stay plain).
+    // Draw the placed spectres: filled via the per-style cached
+    // triangulation (the outline is concave), outlined in the selected edge
+    // style, named after their hexagon's type, with supertile borders of
+    // every order on top (a spectre edge inherits the order of the hexagon
+    // edge it crosses; Γ's internal pair edge and sibling borders stay
+    // plain).
     fn draw_spectres(&self, painter: &egui::Painter, rect: egui::Rect, canvas_center: egui::Pos2) {
         let Some(top) = self.tree_top else { return };
         let t = Transducer::global();
         let cull = rect.expand(4.0 * self.zoom);
-        let mut border_segs: Vec<(usize, [egui::Pos2; 2])> = Vec::new();
+        let style = self.edge_style;
+        let s = style.samples();
+        let mut border_segs: Vec<(usize, Vec<egui::Pos2>)> = Vec::new();
         for (&(hex, idx), poly) in &self.spectre_cache {
-            let pts: Vec<egui::Pos2> = poly
-                .iter()
-                .map(|&p| zd_screen(p, self.zoom, self.pan, canvas_center))
-                .collect();
+            let pts: [egui::Pos2; 14] =
+                std::array::from_fn(|i| zd_screen(poly[i], self.zoom, self.pan, canvas_center));
             if !pts.iter().any(|p| cull.contains(*p)) {
                 continue;
             }
@@ -728,16 +878,17 @@ impl ExplorerApp {
             } else {
                 base
             };
+            let outline = spectre_outline(&pts, style);
             let mut mesh = egui::epaint::Mesh::default();
-            for &p in &pts {
+            for &p in &outline {
                 mesh.colored_vertex(p, color);
             }
-            for tri in SPECTRE_TRIANGLES {
-                mesh.indices.extend(tri.map(|i| i as u32));
+            for tri in style_triangles(style) {
+                mesh.indices.extend_from_slice(tri);
             }
             painter.add(egui::Shape::mesh(mesh));
             painter.add(egui::Shape::closed_line(
-                pts.clone(),
+                outline.clone(),
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(25, 25, 25)),
             ));
 
@@ -806,7 +957,11 @@ impl ExplorerApp {
                     let delta = our_direction(me.hi as usize) as u8;
                     let order = t.border_order(top, &tile.coords, delta);
                     if order > 0 {
-                        border_segs.push((order, [pts[edge], pts[(edge + 1) % 14]]));
+                        // The edge's stretch of the outline, curve and all.
+                        let seg = (0..=s)
+                            .map(|k| outline[(edge * s + k) % (14 * s)])
+                            .collect();
+                        border_segs.push((order, seg));
                     }
                 }
             }
@@ -814,7 +969,10 @@ impl ExplorerApp {
         border_segs.sort_unstable_by_key(|&(order, _)| order);
         for (order, seg) in border_segs {
             let width = ((self.zoom * 0.045).max(1.5) * (order as f32).sqrt()).min(self.zoom * 0.4);
-            painter.line_segment(seg, egui::Stroke::new(width, self.order_color(order)));
+            painter.add(egui::Shape::line(
+                seg,
+                egui::Stroke::new(width, self.order_color(order)),
+            ));
         }
     }
 
@@ -1115,6 +1273,20 @@ impl ExplorerApp {
                             }
                         });
                 });
+                if self.mode == Mode::Spectre {
+                    // The three published tile shapes (paper Fig. 1.1):
+                    // straight Tile(1,1) and two curved-edge Spectres.
+                    ui.horizontal(|ui| {
+                        ui.label("Edges:");
+                        egui::ComboBox::from_id_salt("edge-style")
+                            .selected_text(self.edge_style.name())
+                            .show_ui(ui, |ui| {
+                                for st in EdgeStyle::ALL {
+                                    ui.selectable_value(&mut self.edge_style, st, st.name());
+                                }
+                            });
+                    });
+                }
                 ui.add_space(4.0);
                 if ui.button("Center (0,0)").clicked() {
                     self.pan = egui::Vec2::ZERO;
@@ -1816,6 +1988,56 @@ mod tests {
         app.tree_strip();
         assert_eq!(app.tree_top, None);
         assert_eq!(app.tree_cache.len(), 0);
+    }
+
+    /// Every edge style's curve is odd around the edge midpoint, so the two
+    /// tiles sharing an edge trace the same arc and the styles glue without
+    /// gaps or overlaps.
+    #[test]
+    fn edge_profiles_glue_both_ways() {
+        for style in EdgeStyle::ALL {
+            for k in 0..=24 {
+                let t = k as f32 / 24.0;
+                assert!(
+                    (style.offset(t) + style.offset(1.0 - t)).abs() < 1e-5,
+                    "{style:?} not point-symmetric at t = {t}",
+                );
+            }
+        }
+    }
+
+    /// Each style's cached triangulation covers its outline exactly: n − 2
+    /// triangles whose unsigned areas sum to the polygon area (overlapping
+    /// or escaping triangles would inflate the sum).
+    #[test]
+    fn style_triangulations_fill_the_outline() {
+        let poly = spectre_place(Zd::ZERO, Zd::ONE, 0);
+        let pts: [egui::Pos2; 14] = std::array::from_fn(|i| {
+            let (x, y) = poly[i].to_xy();
+            egui::pos2(x as f32, -y as f32)
+        });
+        for style in EdgeStyle::ALL {
+            let outline = spectre_outline(&pts, style);
+            let tris = style_triangles(style);
+            assert_eq!(tris.len(), outline.len() - 2, "{style:?}: triangle count");
+            let polygon_area: f32 = (0..outline.len())
+                .map(|i| {
+                    let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+                    (a.x * b.y - b.x * a.y) / 2.0
+                })
+                .sum();
+            let triangle_area: f32 = tris
+                .iter()
+                .map(|tri| {
+                    let [a, b, c] = tri.map(|i| outline[i as usize]);
+                    ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / 2.0
+                })
+                .sum();
+            assert!(
+                (polygon_area.abs() - triangle_area).abs() < polygon_area.abs() * 1e-3,
+                "{style:?}: polygon area {polygon_area} vs triangulated {triangle_area}",
+            );
+        }
     }
 
     /// Spectre mode: the depth-2 patch yields one spectre per hexagon plus
